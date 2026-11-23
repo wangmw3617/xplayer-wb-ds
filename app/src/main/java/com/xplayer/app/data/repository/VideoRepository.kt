@@ -1,0 +1,86 @@
+package com.xplayer.app.data.repository
+
+import android.content.Context
+import com.xplayer.app.data.local.PlaybackHistoryDao
+import com.xplayer.app.data.local.VideoDao
+import com.xplayer.app.data.local.VideoEntity
+import kotlinx.coroutines.flow.Flow
+import java.io.File
+
+class VideoRepository(
+    private val context: Context,
+    private val dao: VideoDao,
+    private val historyDao: PlaybackHistoryDao,
+) {
+
+    val videos: Flow<List<VideoEntity>> = dao.observeAll()
+
+    val count: Flow<Int> = dao.observeCount()
+
+    suspend fun all(): List<VideoEntity> = dao.all()
+
+    suspend fun find(path: String): VideoEntity? = dao.findByPath(path)
+
+    suspend fun upsertAll(items: List<VideoEntity>) = dao.upsertAll(items)
+
+    suspend fun clear() = dao.clear()
+
+    suspend fun videosInFolder(folder: String): List<VideoEntity> = dao.videosInFolder(folder)
+
+    suspend fun deleteMissing(paths: Set<String>) {
+        dao.allPaths().forEach { path ->
+            if (path !in paths) {
+                dao.deleteByPath(path)
+                historyDao.delete(path)
+            }
+        }
+    }
+
+    /** 屏蔽目录时立即把该目录下的视频从库中移除，避免残留条目 */
+    suspend fun deleteInFolder(folder: String) {
+        dao.videosInFolder(folder).forEach { video ->
+            dao.deleteByPath(video.path)
+            historyDao.delete(video.path)
+        }
+    }
+
+    /**
+     * 重命名：必须是同目录下改名，避免跨分区移动失败。
+     * 成功时同步更新播放记录中的 mediaId。
+     */
+    suspend fun rename(video: VideoEntity, newName: String): Result<String> {
+        val source = File(video.path)
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return Result.failure(IllegalArgumentException("empty name"))
+        val extension = source.extension
+        val targetName = if (extension.isNotEmpty() && !trimmed.endsWith(".$extension", ignoreCase = true)) {
+            "$trimmed.$extension"
+        } else {
+            trimmed
+        }
+        val target = File(source.parentFile, targetName)
+        if (target.exists()) return Result.failure(IllegalStateException("exists"))
+        val moved = runCatching { source.renameTo(target) }.getOrDefault(false)
+        if (!moved) return Result.failure(IllegalStateException("rename failed"))
+        dao.rename(video.path, target.absolutePath, target.nameWithoutExtension)
+        historyDao.findByMediaId(video.path)?.let { history ->
+            historyDao.upsert(history.copy(mediaId = target.absolutePath, title = target.nameWithoutExtension))
+        }
+        return Result.success(target.nameWithoutExtension)
+    }
+
+    suspend fun delete(video: VideoEntity): Result<Unit> {
+        val file = File(video.path)
+        if (file.exists() && !file.delete()) return Result.failure(IllegalStateException("delete failed"))
+        dao.deleteByPath(video.path)
+        historyDao.delete(video.path)
+        video.thumbnailPath?.let { runCatching { File(it).delete() } }
+        return Result.success(Unit)
+    }
+
+    fun thumbnailFile(path: String): File {
+        val dir = File(context.cacheDir, "thumbs").apply { mkdirs() }
+        val name = Integer.toHexString(path.hashCode()) + ".jpg"
+        return File(dir, name)
+    }
+}

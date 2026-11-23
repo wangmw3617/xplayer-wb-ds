@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">XPlayer</string>
+
+    <!-- Common -->
+    <string name="common_ok">OK</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="common_save">Save</string>
+    <string name="common_delete">Delete</string>
+    <string name="common_rename">Rename</string>
+    <string name="common_reset">Reset</string>
+    <string name="common_confirm">Confirm</string>
+    <string name="common_close">Close</string>
+    <string name="common_apply">Apply</string>
+    <string name="common_back">Back</string>
+    <string name="common_search">Search</string>
+    <string name="common_retry">Retry</string>
+    <string name="common_none">None</string>
+    <string name="common_loading">Loading…</string>
+    <string name="common_more">More</string>
+    <string name="common_edit">Edit</string>
+    <string name="common_zero">Reset to zero</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_videos">Videos</string>
+    <string name="nav_folders">Folders</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Permission -->
+    <string name="perm_title">Storage access required</string>
+    <string name="perm_desc">XPlayer needs full storage access to scan videos on this device, read sidecar subtitles and save screenshots. Nothing is uploaded.</string>
+    <string name="perm_grant">Grant access</string>
+    <string name="perm_granted">Access granted</string>
+    <string name="perm_denied_title">Limited access</string>
+    <string name="perm_denied_desc">Some folders cannot be scanned. You can grant access later in system settings.</string>
+    <string name="perm_open_settings">Open settings</string>
+    <string name="perm_later">Later</string>
+    <string name="perm_notif_desc">Allow notifications to show the media control card for background audio playback.</string>
+
+    <!-- Home -->
+    <string name="home_continue">Continue watching</string>
+    <string name="home_continue_empty">Nothing in progress</string>
+    <string name="home_continue_empty_desc">Play any video and it will show up here</string>
+    <string name="home_recent">Recently played</string>
+    <string name="home_recent_empty">No playback history yet</string>
+    <string name="home_network">Network stream</string>
+    <string name="home_network_desc">Play an HTTP/HTTPS, HLS or direct media link</string>
+    <string name="home_network_hint">https://example.com/video.m3u8</string>
+    <string name="home_network_play">Play</string>
+    <string name="home_network_history">Direct link history</string>
+    <string name="home_network_more">More storages: WebDAV / SMB / Emby coming soon</string>
+    <string name="home_network_invalid">Enter a valid http(s) link</string>
+    <string name="home_codec">Hardware decode check</string>
+    <string name="home_codec_desc">Inspect codecs supported by this device</string>
+    <string name="home_resume">Resume</string>
+    <string name="home_remaining">%1$s left</string>
+    <string name="home_remove_record">Remove record</string>
+    <string name="home_empty">No videos found</string>
+    <string name="home_empty_desc">Grant storage access and run a scan to build your library</string>
+    <string name="home_scan">Scan now</string>
+    <string name="home_video_count">%1$d videos in library</string>
+    <string name="home_watching">Watching</string>
+
+    <!-- Videos -->
+    <string name="videos_title">Videos</string>
+    <string name="videos_search">Search videos</string>
+    <string name="videos_sort">Sort</string>
+    <string name="videos_sort_date">Date added</string>
+    <string name="videos_sort_name">Name</string>
+    <string name="videos_sort_size">File size</string>
+    <string name="videos_sort_duration">Duration</string>
+    <string name="videos_view_grid">Grid</string>
+    <string name="videos_view_list">List</string>
+    <string name="videos_empty">No videos</string>
+    <string name="videos_empty_desc">Run a full rescan from Settings → Media scanning</string>
+    <string name="videos_no_match">No match for “%1$s”</string>
+    <string name="videos_count">%1$d videos</string>
+    <string name="videos_detail">Video details</string>
+    <string name="videos_path">Path</string>
+    <string name="videos_codec">Codec</string>
+    <string name="videos_resolution">Resolution</string>
+    <string name="videos_hdr">Dynamic range</string>
+    <string name="videos_audio_tracks">Audio tracks</string>
+    <string name="videos_subtitle_tracks">Subtitle tracks</string>
+    <string name="videos_size">Size</string>
+    <string name="videos_duration">Duration</string>
+    <string name="videos_modified">Modified</string>
+    <string name="videos_delete_confirm">Delete “%1$s”? The file will be removed from this device.</string>
+    <string name="videos_rename_hint">New file name</string>
+    <string name="videos_rename_title">Rename video</string>
+    <string name="videos_renamed">Renamed</string>
+    <string name="videos_deleted">Deleted</string>
+    <string name="videos_operation_failed">Operation failed</string>
+
+    <!-- Folders -->
+    <string name="folders_title">Folders</string>
+    <string name="folders_empty">No folders</string>
+    <string name="folders_empty_desc">Videos are grouped here by directory</string>
+    <string name="folders_videos">%1$d videos</string>
+    <string name="folders_hide">Hide this folder</string>
+    <string name="folders_unhide">Unhide this folder</string>
+    <string name="folders_hidden">Hidden folders</string>
+    <string name="folders_hidden_desc">Excluded from scanning, hidden from lists</string>
+    <string name="folders_hidden_empty">No hidden folders</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_group_appearance">Appearance</string>
+    <string name="settings_group_engine">Engine and decoding</string>
+    <string name="settings_group_gesture">Gestures and interaction</string>
+    <string name="settings_group_playback">Playback and subtitles</string>
+    <string name="settings_group_mpv">mpv lab</string>
+    <string name="settings_group_media">Media scanning</string>
+    <string name="settings_group_about">About</string>
+
+    <string name="settings_dark">Theme mode</string>
+    <string name="settings_dark_system">Follow system</string>
+    <string name="settings_dark_light">Light</string>
+    <string name="settings_dark_dark">Dark</string>
+    <string name="settings_dark_amoled">Pure black (AMOLED)</string>
+    <string name="settings_dynamic_color">Dynamic color</string>
+    <string name="settings_dynamic_color_on">Follows wallpaper color (Android 12+)</string>
+    <string name="settings_dynamic_color_off">Using built-in seed color</string>
+    <string name="settings_seed">Seed color</string>
+    <string name="settings_seed_desc">%1$s</string>
+    <string name="settings_seed_ocean">Ocean</string>
+    <string name="settings_seed_forest">Forest</string>
+    <string name="settings_seed_sunset">Sunset</string>
+    <string name="settings_seed_violet">Violet</string>
+    <string name="settings_seed_rose">Rose</string>
+    <string name="settings_seed_slate">Slate</string>
+
+    <string name="settings_engine_policy">Default engine policy</string>
+    <string name="settings_engine_policy_media3">Media3 first · ASS auto mpv</string>
+    <string name="settings_engine_policy_media3_only">Media3 locked</string>
+    <string name="settings_engine_policy_mpv">libmpv locked</string>
+    <string name="settings_engine_policy_media3_full">Media3 first (smart routing)</string>
+    <string name="settings_engine_policy_media3_only_full">Force Media3</string>
+    <string name="settings_engine_policy_mpv_full">Force libmpv</string>
+    <string name="settings_ass_auto">ASS subtitles to mpv</string>
+    <string name="settings_ass_auto_desc_on">ASS/SSA switches to libmpv for libass effects</string>
+    <string name="settings_ass_auto_desc_off">ASS rendered by the system renderer</string>
+    <string name="settings_mpv_decoder">mpv hardware decoding</string>
+    <string name="settings_mpv_decoder_mediacodec">mediacodec · zero copy</string>
+    <string name="settings_mpv_decoder_copy">mediacodec-copy · shader friendly</string>
+    <string name="settings_mpv_decoder_soft">software · CPU fallback</string>
+    <string name="settings_frame_rate">Match display frame rate</string>
+    <string name="settings_frame_rate_desc_on">Video fps requested from the display (Android 11+)</string>
+    <string name="settings_frame_rate_desc_off">Display refresh rate untouched</string>
+
+    <string name="settings_default_speed">Default playback speed</string>
+    <string name="settings_default_speed_desc">%1$s</string>
+    <string name="settings_auto_next">Auto play next video in folder</string>
+    <string name="settings_auto_next_desc_on">Continues with the next file in the same folder</string>
+    <string name="settings_auto_next_desc_off">Stops at the end of a video</string>
+    <string name="settings_background">On leaving the app</string>
+    <string name="settings_background_desc">%1$s</string>
+    <string name="settings_background_pause">Pause playback</string>
+    <string name="settings_background_audio">Continue as audio</string>
+    <string name="settings_background_pip">Enter picture-in-picture</string>
+    <string name="settings_volume_boost">Software volume boost up to 200%</string>
+    <string name="settings_volume_boost_desc_on">Right swipe can exceed system volume</string>
+    <string name="settings_volume_boost_desc_off">Right swipe capped at system volume</string>
+
+    <string name="settings_sub_font_size">Subtitle size</string>
+    <string name="settings_sub_font_size_desc">%1$d%%</string>
+    <string name="settings_sub_color">Subtitle color</string>
+    <string name="settings_sub_color_white">White</string>
+    <string name="settings_sub_color_yellow">Yellow</string>
+    <string name="settings_sub_color_cyan">Cyan</string>
+    <string name="settings_sub_color_green">Green</string>
+    <string name="settings_sub_outline">Outline width</string>
+    <string name="settings_sub_outline_desc">%1$d%%</string>
+    <string name="settings_sub_shadow">Text shadow</string>
+    <string name="settings_sub_shadow_desc_on">Adds a soft drop shadow</string>
+    <string name="settings_sub_shadow_desc_off">No shadow</string>
+    <string name="settings_sub_bg">Background bar</string>
+    <string name="settings_sub_bg_desc_on">Semi-transparent black bar behind text</string>
+    <string name="settings_sub_bg_desc_off">Text only</string>
+    <string name="settings_sub_margin">Bottom margin</string>
+    <string name="settings_sub_margin_desc">%1$d dp</string>
+    <string name="settings_sub_force_ass">Force override ASS style</string>
+    <string name="settings_sub_force_ass_desc_on">Custom style replaces ASS typesetting</string>
+    <string name="settings_sub_force_ass_desc_off">ASS typesetting and fonts preserved</string>
+
+    <string name="gesture_left_action">Left vertical swipe</string>
+    <string name="gesture_right_action">Right vertical swipe</string>
+    <string name="gesture_action_brightness">Screen brightness</string>
+    <string name="gesture_action_volume">Media volume</string>
+    <string name="gesture_action_disabled">Disabled</string>
+    <string name="gesture_sensitivity">Swipe sensitivity</string>
+    <string name="gesture_sensitivity_desc">%1$s×</string>
+    <string name="gesture_horizontal">Horizontal seek swipe</string>
+    <string name="gesture_horizontal_desc_on">Drag to seek with on-screen offset</string>
+    <string name="gesture_horizontal_desc_off">Seek gesture disabled</string>
+    <string name="gesture_seek_span">Full-screen seek span</string>
+    <string name="gesture_seek_span_desc">%1$s</string>
+    <string name="gesture_seek_precise">Precise seek</string>
+    <string name="gesture_seek_precise_on">Frame accurate, slower on long GOP</string>
+    <string name="gesture_seek_precise_off">Keyframe first, fastest</string>
+    <string name="gesture_single_tap">Single tap</string>
+    <string name="gesture_tap_toggle">Toggle controls</string>
+    <string name="gesture_tap_play">Play or pause and show controls</string>
+    <string name="gesture_double_left">Double tap left area</string>
+    <string name="gesture_double_center">Double tap center</string>
+    <string name="gesture_double_right">Double tap right area</string>
+    <string name="gesture_step">Step per double tap</string>
+    <string name="gesture_long_press">Long press speed-up</string>
+    <string name="gesture_long_press_desc_on">Hold to boost, release to restore</string>
+    <string name="gesture_long_press_desc_off">Long press does nothing</string>
+    <string name="gesture_long_speed">Hold speed</string>
+    <string name="gesture_long_drag">Fine-tune speed while holding</string>
+    <string name="gesture_long_drag_desc_on">Slide horizontally to pick 0.5×–4×</string>
+    <string name="gesture_long_drag_desc_off">Fixed hold speed</string>
+    <string name="gesture_long_delay">Long press delay</string>
+    <string name="gesture_zoom">Pinch and pan</string>
+    <string name="gesture_zoom_free">Free zoom and pan</string>
+    <string name="gesture_zoom_toggle">Quick fit and crop toggle</string>
+    <string name="gesture_zoom_off">Disabled</string>
+    <string name="gesture_edge">Edge protection</string>
+    <string name="gesture_edge_narrow">Narrow · 16dp</string>
+    <string name="gesture_edge_standard">Standard · 24dp</string>
+    <string name="gesture_edge_wide">Wide · 36dp</string>
+    <string name="gesture_reset">Restore default gestures</string>
+    <string name="gesture_reset_done">Gestures restored</string>
+
+    <string name="action_seek_back">Seek back</string>
+    <string name="action_seek_forward">Seek forward</string>
+    <string name="action_play_pause">Play or pause</string>
+    <string name="action_prev">Previous video</string>
+    <string name="action_next">Next video</string>
+    <string name="action_mute">Mute</string>
+    <string name="action_screenshot">Screenshot</string>
+    <string name="action_aspect">Toggle fit and crop</string>
+
+    <string name="settings_scan_now">Rescan library</string>
+    <string name="settings_scan_now_desc">%1$d videos · tap to rescan</string>
+    <string name="settings_scan_auto">Scan on launch</string>
+    <string name="settings_scan_auto_desc_on">Rebuilds the library when the app starts</string>
+    <string name="settings_scan_auto_desc_off">Manual scanning only</string>
+    <string name="settings_scan_sources">Scanned roots</string>
+    <string name="settings_scan_sources_desc">Internal and external storage</string>
+    <string name="settings_scanning">Scanning… %1$d</string>
+
+    <string name="settings_version">Version</string>
+    <string name="settings_version_desc">%1$s</string>
+    <string name="settings_engines">Player engines</string>
+    <string name="settings_engines_desc">Media3 + libmpv %1$s</string>
+    <string name="settings_source">Source code</string>
+    <string name="settings_source_desc">GitHub repository and CI builds</string>
+
+    <!-- mpv lab -->
+    <string name="mpv_conf">mpv.conf</string>
+    <string name="mpv_conf_desc">Advanced libmpv options, applied on next mpv session</string>
+    <string name="mpv_conf_hint">vo=gpu-next\ntone-mapping=bt.2446a\ndeband=yes</string>
+    <string name="mpv_preset_band">Insert deband preset</string>
+    <string name="mpv_preset_hdr">Insert HDR tone mapping preset</string>
+    <string name="mpv_conf_saved">mpv.conf saved</string>
+    <string name="mpv_conf_reset_done">mpv.conf restored to default</string>
+    <string name="mpv_shaders">GLSL shaders</string>
+    <string name="mpv_shaders_desc">%1$d shaders · %2$d enabled</string>
+    <string name="mpv_shader_master">Shader pipeline</string>
+    <string name="mpv_shader_master_desc_on">Active for the libmpv engine</string>
+    <string name="mpv_shader_master_desc_off">All shaders bypassed</string>
+    <string name="mpv_shader_import">Import .glsl</string>
+    <string name="mpv_shader_empty">No shaders yet</string>
+    <string name="mpv_shader_empty_desc">Import Anime4K or any GLSL shader to enhance libmpv output</string>
+    <string name="mpv_shader_imported">Shader imported</string>
+    <string name="mpv_shader_deleted">Shader removed</string>
+    <string name="mpv_shader_move_up">Move up</string>
+    <string name="mpv_shader_move_down">Move down</string>
+    <string name="mpv_lab_note">Changes affect the libmpv engine only. Media3 keeps its own pipeline.</string>
+
+    <!-- Codec panel -->
+    <string name="codec_title">Hardware decode check</string>
+    <string name="codec_chip">Chipset</string>
+    <string name="codec_refresh">Refresh</string>
+    <string name="codec_unsupported">Not supported</string>
+    <string name="codec_supported">Supported</string>
+    <string name="codec_decoder">Hardware decoder</string>
+    <string name="codec_hdr_title">Dynamic range formats</string>
+    <string name="codec_dolby_vision_profile">Dolby Vision Profile %1$s</string>
+
+    <!-- Player -->
+    <string name="player_switch_engine">Switch engine</string>
+    <string name="player_switching">Switching to %1$s…</string>
+    <string name="player_locked">Screen locked</string>
+    <string name="player_unlock_hint">Tap to unlock</string>
+    <string name="player_screenshot">Screenshot</string>
+    <string name="player_screenshot_saved">Saved to Pictures/XPlayer</string>
+    <string name="player_screenshot_failed">Screenshot failed</string>
+    <string name="player_background_audio">Background audio</string>
+    <string name="player_background_started">Playing in background</string>
+    <string name="player_aspect">Aspect ratio</string>
+    <string name="player_aspect_fit">Fit screen</string>
+    <string name="player_aspect_crop">Crop to fill</string>
+    <string name="player_aspect_stretch">Stretch</string>
+    <string name="player_aspect_16_9">16:9</string>
+    <string name="player_aspect_4_3">4:3</string>
+    <string name="player_aspect_original">Original size</string>
+    <string name="player_rotate_lock">Rotation lock</string>
+    <string name="player_rotate_auto">Auto rotate</string>
+    <string name="player_rotate_landscape">Lock landscape</string>
+    <string name="player_rotate_portrait">Lock portrait</string>
+    <string name="player_pip">Picture-in-picture</string>
+    <string name="player_pip_failed">Picture-in-picture unavailable</string>
+    <string name="player_speed">Speed</string>
+    <string name="player_tracks">Audio and subtitles</string>
+    <string name="player_track_audio">Audio</string>
+    <string name="player_track_subtitle">Subtitles</string>
+    <string name="player_subtitle_off">Off</string>
+    <string name="player_import_subtitle">Import subtitle file</string>
+    <string name="player_subtitle_delay">Subtitle sync</string>
+    <string name="player_subtitle_style">Subtitle style</string>
+    <string name="player_no_tracks">No selectable tracks</string>
+    <string name="player_prev">Previous</string>
+    <string name="player_next">Next</string>
+    <string name="player_remaining">-%1$s</string>
+    <string name="player_total">%1$s</string>
+    <string name="player_error">Playback error</string>
+    <string name="player_error_retry_mpv">Playback failed on Media3. Switch to libmpv?</string>
+    <string name="player_ass_routed">ASS subtitle detected, switched to libmpv</string>
+    <string name="player_resume_toast">Resumed at %1$s</string>
+    <string name="player_play_from_start">From start</string>
+    <string name="player_ended">Playback finished</string>
+    <string name="player_info">Media info</string>
+    <string name="player_hdr_badge">HDR</string>
+    <string name="player_volume">Volume %1$d%%</string>
+    <string name="player_brightness">Brightness %1$d%%</string>
+    <string name="player_seek_preview">%1$s%2$s</string>
+    <string name="player_zoom">Zoom %1$d%%</string>
+    <string name="player_long_speed">%1$s×</string>
+    <string name="player_track_language_unknown">Undetermined</string>
+    <string name="player_engine_unavailable">libmpv is unavailable</string>
+
+    <!-- Network -->
+    <string name="network_title">Network stream</string>
+    <string name="network_url">URL</string>
+    <string name="network_name">Display name</string>
+    <string name="network_name_hint">Optional</string>
+    <string name="network_headers">Custom HTTP headers</string>
+    <string name="network_headers_hint">Referer: https://example.com</string>
+    <string name="network_history_empty">No direct links yet</string>
+</resources>
