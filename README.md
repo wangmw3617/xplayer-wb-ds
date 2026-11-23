@@ -62,13 +62,24 @@ app/src/main/java/com/xplayer/app/
 
 推送后由 `.github/workflows/android-ci.yml` 自动执行 `compileDebugKotlin lintDebug` → `assembleDebug`，产物以 `XPlayer-arm64-v8a-debug.apk` 上传（保留 14 天）；推送 `v*` 标签会额外签名打包并创建 GitHub Release。
 
-下载最新 CI 产物（需已 `gh auth login`）：
+每次推送产出两种包：
+
+| 包 | 触发 | 体积 | 签名 |
+| --- | --- | --- | --- |
+| `XPlayer-arm64-v8a-debug.apk` | 任意推送 / PR | ~96MB | debug |
+| `XPlayer-arm64-v8a-release.apk` | 推 `v*` 标签，或手动触发时勾选 `build_release` | ~85MB | 有 keystore 用正式证书，否则回退 debug |
+
+下载方式：
 
 ```bash
-gh run download -n XPlayer-arm64-v8a-debug -D ./apk \
-  --repo wangmw3617/xplayer-wb-ds
-# 或直接打开 Actions 页面手动下载
-gh run list --repo wangmw3617/xplayer-wb-ds --limit 3
+# 最新 Release 的两个 APK（推荐，直接可装）
+gh release download v1.0.0 --repo wangmw3617/xplayer-wb-ds -D ./apk
+
+# 或取某次 CI 的 artifact
+gh run download -n XPlayer-arm64-v8a-release -D ./apk --repo wangmw3617/xplayer-wb-ds
+
+# 手动触发一次带 release 包的构建
+gh workflow run "Android CI" --repo wangmw3617/xplayer-wb-ds -f build_release=true
 ```
 
 ### 4.2 本地构建（可选）
@@ -112,6 +123,6 @@ gh run list --repo wangmw3617/xplayer-wb-ds --limit 3
 
 ## 7. 已知限制
 
-- APK 体积：debug 未混淆约 96MB，其中 libmpv + FFmpeg 原生库 ~49MB、`subfont.ttf` 6.4MB。PRD 期望的 35–45MB 需开启 R8 并裁剪 mpv 资源，当前优先保证 JNI 反射不被误伤，故 `isMinifyEnabled = false`。
+- APK 体积：debug 约 96MB、release 约 85MB，其中 libmpv + FFmpeg 原生库 ~49MB（以未压缩方式存放，便于 mmap 直接加载）、`subfont.ttf` 6.4MB。PRD 期望的 35–45MB 可两条路达成：① `packaging.jniLibs.useLegacyPackaging = true`（原生库改压缩，安装时解压，零代码风险，预计降到 ~40MB）；② 开启 R8 + keep 规则（有 JNI 反射误伤风险，需真机回归）。当前为稳定性优先，均未启用。
 - 着色器「组合预设位」（自定义保存番剧超分方案）尚未实现，目前支持单条启用/排序/总开关与 `mpv.conf` 预设片段。
 - 未在真机验证 HDR/DV 点亮与 Anime4K 实际渲染效果，需按 PRD 里程碑做真机验收。
