@@ -8,6 +8,12 @@ android {
     namespace = "com.xplayer.app"
     compileSdk = 37
 
+    // CI 未配置 keystore Secret 时自动退回 debug 证书，避免 release 打包直接失败
+    val releaseKeystore = System.getenv("XPLAYER_KEYSTORE_PATH")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { file(it) }
+        ?.takeIf { it.exists() }
+
     defaultConfig {
         applicationId = "com.xplayer.app"
         minSdk = 29
@@ -19,9 +25,8 @@ android {
 
     signingConfigs {
         create("release") {
-            val ksPath = System.getenv("XPLAYER_KEYSTORE_PATH")
-            if (!ksPath.isNullOrBlank() && file(ksPath).exists()) {
-                storeFile = file(ksPath)
+            if (releaseKeystore != null) {
+                storeFile = releaseKeystore
                 storePassword = System.getenv("XPLAYER_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("XPLAYER_KEY_ALIAS")
                 keyPassword = System.getenv("XPLAYER_KEY_PASSWORD")
@@ -38,7 +43,7 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = if (!System.getenv("XPLAYER_KEYSTORE_PATH").isNullOrBlank()) {
+            signingConfig = if (releaseKeystore != null) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")

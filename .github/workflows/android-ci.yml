@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [ main, dev ]
   workflow_dispatch:
+    inputs:
+      build_release:
+        description: '同时构建 release APK（不推 tag 也能拿到发布包）'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -42,7 +47,7 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Locate APK
+      - name: Locate debug APK
         id: apk
         run: |
           set -e
@@ -64,22 +69,54 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-      - name: Assemble signed release APK
-        if: startsWith(github.ref, 'refs/tags/v')
+      # ---------- 发布包：推 v* 标签，或手动触发时勾选 build_release ----------
+
+      - name: Prepare release keystore
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.build_release
         env:
-          XPLAYER_KEYSTORE_PATH: ${{ github.workspace }}/release.jks
-          XPLAYER_KEYSTORE_PASSWORD: ${{ secrets.XPLAYER_KEYSTORE_PASSWORD }}
-          XPLAYER_KEY_ALIAS: ${{ secrets.XPLAYER_KEY_ALIAS }}
-          XPLAYER_KEY_PASSWORD: ${{ secrets.XPLAYER_KEY_PASSWORD }}
+          KEYSTORE_B64: ${{ secrets.XPLAYER_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.XPLAYER_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.XPLAYER_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.XPLAYER_KEY_PASSWORD }}
         run: |
           set -e
-          if [ -n "$XPLAYER_KEYSTORE_PASSWORD" ]; then
-            echo "${{ secrets.XPLAYER_KEYSTORE_BASE64 }}" | base64 -d > "$XPLAYER_KEYSTORE_PATH"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            {
+              echo "XPLAYER_KEYSTORE_PATH=$RUNNER_TEMP/release.jks"
+              echo "XPLAYER_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "XPLAYER_KEY_ALIAS=$KEY_ALIAS"
+              echo "XPLAYER_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "使用仓库 Secrets 中的正式 keystore 签名。"
           else
-            echo "No keystore secret configured, release build will fall back to debug signing."
+            echo "::warning::未配置 keystore secrets，release APK 回退 debug 证书签名（可安装，但不可上架）。"
           fi
+
+      - name: Assemble release APK
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.build_release
+        run: |
+          set -e
           ./gradlew assembleRelease --stacktrace
-          find app/build/outputs/apk/release -name '*.apk' -exec ls -lh {} \;
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "Release APK not found" >&2
+            exit 1
+          fi
+          TARGET=app/build/outputs/apk/release/XPlayer-arm64-v8a-release.apk
+          cp "$APK" "$TARGET"
+          ls -lh "$TARGET"
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$TARGET" | head -n 6 || true
+
+      - name: Upload release APK
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.build_release
+        uses: actions/upload-artifact@v7
+        with:
+          name: XPlayer-arm64-v8a-release
+          path: app/build/outputs/apk/release/XPlayer-arm64-v8a-release.apk
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -90,6 +127,6 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/release/XPlayer-arm64-v8a-release.apk
             app/build/outputs/apk/debug/XPlayer-arm64-v8a-debug.apk
           generate_release_notes: true
