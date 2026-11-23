@@ -58,12 +58,17 @@ app/src/main/java/com/xplayer/app/
 
 ### 4.1 GitHub Actions（推荐，零本地编译）
 
+仓库：<https://github.com/wangmw3617/xplayer-wb-ds>（私有）
+
 推送后由 `.github/workflows/android-ci.yml` 自动执行 `compileDebugKotlin lintDebug` → `assembleDebug`，产物以 `XPlayer-arm64-v8a-debug.apk` 上传（保留 14 天）；推送 `v*` 标签会额外签名打包并创建 GitHub Release。
 
+下载最新 CI 产物（需已 `gh auth login`）：
+
 ```bash
-git init && git add . && git commit -m "feat: XPlayer M1-M4"
-git remote add origin git@github.com:<user>/<repo>.git
-git push -u origin main
+gh run download -n XPlayer-arm64-v8a-debug -D ./apk \
+  --repo wangmw3617/xplayer-wb-ds
+# 或直接打开 Actions 页面手动下载
+gh run list --repo wangmw3617/xplayer-wb-ds --limit 3
 ```
 
 ### 4.2 本地构建（可选）
