@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -18,7 +19,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -66,6 +69,15 @@ class MainActivity : ComponentActivity() {
                 .collectAsState(initial = AppSettings())
 
             XPlayerTheme(settings.appearance) {
+                // 主题可能由偏好强制成深色，系统栏图标需跟着走
+                val view = LocalView.current
+                val darkSurface = MaterialTheme.colorScheme.background.luminance() < 0.5f
+                SideEffect {
+                    WindowCompat.getInsetsController(window, view).apply {
+                        isAppearanceLightStatusBars = !darkSurface
+                        isAppearanceLightNavigationBars = !darkSurface
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
