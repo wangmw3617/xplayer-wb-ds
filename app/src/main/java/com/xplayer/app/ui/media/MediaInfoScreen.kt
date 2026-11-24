@@ -14,8 +14,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -62,6 +67,7 @@ fun MediaInfoScreen(
     key: String,
     title: String,
     onBack: () -> Unit,
+    onPlay: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     var info by remember(sourceType, key) { mutableStateOf<MediaInfo?>(null) }
@@ -111,13 +117,21 @@ fun MediaInfoScreen(
                 }
             }
 
-            else -> MediaInfoContent(info = current, topPadding = padding.calculateTopPadding())
+            else -> MediaInfoContent(
+                info = current,
+                topPadding = padding.calculateTopPadding(),
+                onPlay = onPlay,
+            )
         }
     }
 }
 
 @Composable
-private fun MediaInfoContent(info: MediaInfo, topPadding: Dp) {
+private fun MediaInfoContent(
+    info: MediaInfo,
+    topPadding: Dp,
+    onPlay: (() -> Unit)? = null,
+) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = topPadding, bottom = 32.dp),
@@ -248,6 +262,26 @@ private fun MediaInfoContent(info: MediaInfo, topPadding: Dp) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
                 )
+            }
+        }
+
+        if (onPlay != null) {
+            item {
+                Button(
+                    onClick = onPlay,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    shape = RoundedCornerShape(50),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(text = stringResource(R.string.info_play_with))
+                }
             }
         }
     }

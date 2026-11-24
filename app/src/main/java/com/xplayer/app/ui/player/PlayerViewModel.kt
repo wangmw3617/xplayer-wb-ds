@@ -11,8 +11,6 @@ import com.xplayer.app.data.datastore.AppSettings
 import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.SubtitlePrefs
 import com.xplayer.app.data.local.SourceType
-import com.xplayer.app.data.media.MediaInfoProbe
-import com.xplayer.app.data.media.techSummary
 import com.xplayer.app.data.scanner.SubtitleFinder
 import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.LocalFileSource
@@ -20,7 +18,6 @@ import com.xplayer.app.data.source.MediaSource
 import com.xplayer.app.data.source.NetworkUrlSource
 import com.xplayer.app.player.PlayerController
 import com.xplayer.app.player.engine.EngineType
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -74,21 +71,8 @@ class PlayerViewModel(
     val sourceKey: String get() = key
     val sourceTitle: String get() = titleArg
 
-    /** 播放页顶部的一行技术摘要（容器/编码/分辨率/帧率/HDR/音轨/码率） */
-    val mediaSummary = MutableStateFlow<String?>(null)
-
     init {
         load()
-    }
-
-    /** 只影响顶部那行字，探测失败就整行不显示，不打断播放 */
-    private fun loadSummary(source: MediaSource) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val info = runCatching {
-                MediaInfoProbe.probe(container.application, source)
-            }.getOrNull() ?: return@launch
-            mediaSummary.value = info.techSummary().takeIf { it.isNotBlank() }
-        }
     }
 
     private fun load() {
@@ -129,7 +113,6 @@ class PlayerViewModel(
                     else -> history.lastPositionMs
                 }
                 resumePosition.value = start
-                loadSummary(current)
                 controller.open(
                     source = current,
                     startPositionMs = start,
@@ -146,7 +129,6 @@ class PlayerViewModel(
                     uri = key,
                     displayName = titleArg.ifBlank { key },
                 )
-                loadSummary(source)
                 controller.open(
                     source = source,
                     startPositionMs = startArg,

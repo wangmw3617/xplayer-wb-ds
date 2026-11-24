@@ -14,7 +14,6 @@ import com.xplayer.app.data.source.MediaSource
 import com.xplayer.app.data.source.MediaUriResolver
 import com.xplayer.app.data.source.NetworkUrlSource
 import com.xplayer.app.data.source.SidecarSubtitle
-import com.xplayer.app.util.Formatters
 import java.io.File
 import java.util.Locale
 
@@ -73,70 +72,6 @@ private fun hdrRank(hdr: HdrType): Int = when (hdr) {
     HdrType.HDR10 -> 2
     HdrType.HDR10_PLUS -> 3
     HdrType.DOLBY_VISION -> 4
-}
-
-/**
- * 播放页顶部那一行技术摘要，例如
- * `MKV · HEVC · 1080P · 24fps · HDR10 · AAC 5.1 · 6.4 Mbps`；
- * 纯音频文件退化成 `FLAC · 44.1 kHz · 1411 kbps`。
- */
-fun MediaInfo.techSummary(): String {
-    val parts = mutableListOf<String>()
-    container?.takeIf { it.isNotBlank() }?.let { parts += it }
-    val video = videoTracks.maxByOrNull { (it.width ?: 0).toLong() * (it.height ?: 0) }
-    if (video != null) {
-        video.codec?.let { parts += it }
-        Formatters.resolutionLabel(video.width ?: 0, video.height ?: 0)
-            .takeIf { it.isNotEmpty() }
-            ?.let { parts += it }
-        video.frameRate?.takeIf { it >= 1f }?.let { fps ->
-            parts += if (fps % 1f == 0f) {
-                "${fps.toInt()}fps"
-            } else {
-                String.format(Locale.US, "%.2ffps", fps)
-            }
-        }
-        if (video.hdr != HdrType.NONE) parts += hdrShort(video.hdr)
-    }
-    val audio = audioTracks.firstOrNull()
-    if (audio != null) {
-        val audioLabel = buildString {
-            audio.codec?.let { append(it) }
-            audio.channels?.takeIf { it > 2 }?.let { channels ->
-                if (isNotEmpty()) append(' ')
-                append(channelLayout(channels))
-            }
-        }
-        if (audioLabel.isNotBlank()) parts += audioLabel
-        if (video == null) {
-            audio.sampleRate?.takeIf { it > 0 }?.let { parts += sampleRateShort(it) }
-        }
-    }
-    if (overallBitrate > 0) parts += bitrateShort(overallBitrate)
-    return parts.joinToString(" · ")
-}
-
-private fun hdrShort(hdr: HdrType): String = when (hdr) {
-    HdrType.NONE -> "SDR"
-    HdrType.HDR10 -> "HDR10"
-    HdrType.HDR10_PLUS -> "HDR10+"
-    HdrType.DOLBY_VISION -> "DV"
-    HdrType.HLG -> "HLG"
-}
-
-private fun channelLayout(channels: Int): String = when (channels) {
-    3 -> "2.1"
-    6 -> "5.1"
-    8 -> "7.1"
-    else -> "${channels}ch"
-}
-
-private fun sampleRateShort(rate: Int): String =
-    if (rate % 1000 == 0) "${rate / 1000} kHz" else String.format(Locale.US, "%.1f kHz", rate / 1000f)
-
-private fun bitrateShort(bitsPerSecond: Long): String = when {
-    bitsPerSecond >= 1_000_000 -> String.format(Locale.US, "%.1f Mbps", bitsPerSecond / 1_000_000.0)
-    else -> "${bitsPerSecond / 1000} kbps"
 }
 
 /**

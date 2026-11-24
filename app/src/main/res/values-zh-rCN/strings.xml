@@ -348,6 +348,9 @@
 
     <!-- 媒体信息 / 外部打开 -->
     <string name="action_media_info">媒体信息</string>
+    <!-- 文件管理器「打开方式」里的独立入口 -->
+    <string name="inspect_app_label">XPlayer 信息</string>
+    <string name="info_play_with">用 XPlayer 播放</string>
     <string name="info_title">媒体信息</string>
     <string name="info_loading">正在分析…</string>
     <string name="info_failed">无法读取该媒体文件</string>

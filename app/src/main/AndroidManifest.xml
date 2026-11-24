@@ -114,6 +114,74 @@
             </intent-filter>
         </activity>
 
+        <!--
+            文件管理器「打开方式」里的独立入口：只分析媒体参数、不起播。
+            README/打开方式列表里显示为 XPlayer 信息，和 XPlayer 播放是两条并列项。
+        -->
+        <activity
+            android:name=".MediaInfoActivity"
+            android:exported="true"
+            android:icon="@drawable/ic_inspect"
+            android:label="@string/inspect_app_label"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.XPlayer">
+
+            <intent-filter android:label="@string/inspect_app_label">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+
+            <intent-filter android:label="@string/inspect_app_label">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+
+            <intent-filter android:label="@string/inspect_app_label">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/x-matroska" />
+
+                <data android:pathPattern=".*\\.mkv" />
+                <data android:pathPattern=".*\\.MKV" />
+                <data android:pathPattern=".*\\.mp4" />
+                <data android:pathPattern=".*\\.MP4" />
+                <data android:pathPattern=".*\\.m4v" />
+                <data android:pathPattern=".*\\.avi" />
+                <data android:pathPattern=".*\\.AVI" />
+                <data android:pathPattern=".*\\.mov" />
+                <data android:pathPattern=".*\\.MOV" />
+                <data android:pathPattern=".*\\.wmv" />
+                <data android:pathPattern=".*\\.flv" />
+                <data android:pathPattern=".*\\.webm" />
+                <data android:pathPattern=".*\\.ts" />
+                <data android:pathPattern=".*\\.m2ts" />
+                <data android:pathPattern=".*\\.mpg" />
+                <data android:pathPattern=".*\\.mpeg" />
+                <data android:pathPattern=".*\\.3gp" />
+                <data android:pathPattern=".*\\.rmvb" />
+                <data android:pathPattern=".*\\.vob" />
+                <data android:pathPattern=".*\\.mp3" />
+                <data android:pathPattern=".*\\.flac" />
+                <data android:pathPattern=".*\\.m4a" />
+                <data android:pathPattern=".*\\.aac" />
+                <data android:pathPattern=".*\\.ogg" />
+                <data android:pathPattern=".*\\.opus" />
+                <data android:pathPattern=".*\\.wav" />
+                <data android:pathPattern=".*\\.wma" />
+                <data android:pathPattern=".*\\.ape" />
+                <data android:pathPattern=".*\\.mka" />
+            </intent-filter>
+        </activity>
+
         <!-- exported=true 供系统媒体控制与蓝牙按键连接 MediaSession -->
         <service
             android:name=".player.service.PlaybackService"

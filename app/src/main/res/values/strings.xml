@@ -359,6 +359,9 @@
 
     <!-- Media info / open with -->
     <string name="action_media_info">Media info</string>
+    <!-- Separate entry in the system "Open with" list -->
+    <string name="inspect_app_label">XPlayer Info</string>
+    <string name="info_play_with">Play with XPlayer</string>
     <string name="info_title">Media info</string>
     <string name="info_loading">Analyzing…</string>
     <string name="info_failed">Couldn\'t read this media file</string>

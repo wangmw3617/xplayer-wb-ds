@@ -37,7 +37,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -114,7 +113,6 @@ fun PlayerScreen(
     val engine by viewModel.engine.collectAsState()
     val state by viewModel.state.collectAsState()
     val settings by viewModel.settings.collectAsState()
-    val mediaSummary by viewModel.mediaSummary.collectAsState()
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val scope = rememberCoroutineScope()
@@ -426,9 +424,7 @@ fun PlayerScreen(
 
                 PlayerTopBar(
                     title = viewModel.controller.currentSource()?.displayName ?: "",
-                    summary = mediaSummary,
                     onBack = onBack,
-                    onInfo = onOpenMediaInfo,
                     onRotate = {
                         rotationMode = (rotationMode + 1) % 3
                         applyRotation(activity, rotationMode)
@@ -615,9 +611,7 @@ fun PlayerScreen(
 @Composable
 private fun PlayerTopBar(
     title: String,
-    summary: String?,
     onBack: () -> Unit,
-    onInfo: () -> Unit,
     onRotate: () -> Unit,
     onPip: () -> Unit,
     modifier: Modifier = Modifier,
@@ -635,44 +629,14 @@ private fun PlayerTopBar(
             contentDescription = stringResource(R.string.common_back),
         )
         Spacer(Modifier.width(6.dp))
-        Column(
+        Text(
+            text = title,
+            color = Color.White,
+            style = MaterialTheme.typography.titleSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = title,
-                color = Color.White,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            // 一行技术参数：容器/编码/分辨率/帧率/HDR/音轨/码率，点开是完整的媒体信息页
-            if (!summary.isNullOrBlank()) {
-                Row(
-                    modifier = Modifier
-                        .padding(top = 2.dp)
-                        .clip(RoundedCornerShape(50))
-                        .clickable(onClick = onInfo)
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = stringResource(R.string.action_media_info),
-                        tint = Color.White.copy(alpha = 0.66f),
-                        modifier = Modifier.size(12.dp),
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = summary,
-                        color = Color.White.copy(alpha = 0.72f),
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
+        )
         OverlayIconButton(
             icon = XPlayerIcons.RotateScreen,
             onClick = onRotate,
