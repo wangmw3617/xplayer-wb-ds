@@ -17,6 +17,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -37,10 +38,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -65,6 +64,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -85,6 +85,7 @@ import com.xplayer.app.R
 import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.BackgroundBehavior
 import com.xplayer.app.data.datastore.GestureAction
+import com.xplayer.app.data.datastore.labelRes
 import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.NetworkUrlSource
 import com.xplayer.app.data.source.SidecarSubtitle
@@ -100,7 +101,7 @@ import java.io.File
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-private enum class PlayerSheet { TRACKS, SPEED, ASPECT, SUBTITLE }
+private enum class PlayerSheet { TRACKS, SPEED, ASPECT, SUBTITLE, SETTINGS }
 
 @Composable
 fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
@@ -114,7 +115,7 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
 
     var controlsVisible by remember { mutableStateOf(true) }
     var sheet by remember { mutableStateOf<PlayerSheet?>(null) }
-    var moreMenu by remember { mutableStateOf(false) }
+    var rotationMode by remember { mutableStateOf(0) }
     var zoomScale by remember { mutableFloatStateOf(1f) }
     var showRemaining by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
@@ -396,7 +397,7 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
             onZoom = { scale, _ -> zoomScale = scale },
         )
 
-        // 顶部 / 底部控制层
+        // 顶部 / 中央 / 底部控制层（布局参考 YouTube 安卓端，配色圆角沿用应用主题）
         AnimatedVisibility(
             visible = controlsVisible && !viewModel.locked,
             enter = fadeIn(),
@@ -407,45 +408,23 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
-                            androidx.compose.ui.graphics.Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0.62f),
-                                0.28f to Color.Transparent,
+                            Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = 0.55f),
+                                0.22f to Color.Transparent,
                                 0.72f to Color.Transparent,
-                                1f to Color.Black.copy(alpha = 0.72f),
+                                1f to Color.Black.copy(alpha = 0.62f),
                             ),
                         ),
                 )
 
                 PlayerTopBar(
                     title = viewModel.controller.currentSource()?.displayName ?: "",
-                    engine = state.engine,
                     onBack = onBack,
-                    onSwitchEngine = {
-                        viewModel.switchEngine(
-                            if (state.engine == EngineType.MEDIA3) EngineType.MPV else EngineType.MEDIA3,
-                        )
-                    },
-                    onAspect = { sheet = PlayerSheet.ASPECT },
-                    moreExpanded = moreMenu,
-                    onMore = { moreMenu = true },
-                    onDismissMore = { moreMenu = false },
-                    onScreenshot = {
-                        moreMenu = false
-                        takeScreenshot()
-                    },
-                    onBackgroundAudio = {
-                        moreMenu = false
-                        ensureNotificationPermission()
-                        if (startBackgroundAudio(context, viewModel, state.positionMs) != null) {
-                            serviceRunning = true
-                            viewModel.controller.pause()
-                            scope.launch {
-                                snackbar.showSnackbar(context.getString(R.string.player_background_started))
-                            }
-                        }
+                    onRotate = {
+                        rotationMode = (rotationMode + 1) % 3
+                        applyRotation(activity, rotationMode)
                     },
                     onPip = {
-                        moreMenu = false
                         val ok = activity?.let {
                             PipController.enter(it, state.videoWidth, state.videoHeight, state.isPlaying)
                         } ?: false
@@ -455,19 +434,15 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
                             }
                         }
                     },
-                    onRotate = { mode ->
-                        moreMenu = false
-                        activity?.requestedOrientation = when (mode) {
-                            0 -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                            1 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        }
-                    },
-                    onSubtitleStyle = {
-                        moreMenu = false
-                        sheet = PlayerSheet.SUBTITLE
-                    },
                     modifier = Modifier.align(Alignment.TopCenter),
+                )
+
+                PlayerCenterControls(
+                    isPlaying = state.isPlaying,
+                    onRewind = { viewModel.controller.seekBy(-10_000) },
+                    onForward = { viewModel.controller.seekBy(10_000) },
+                    onTogglePlay = viewModel.controller::togglePlayPause,
+                    modifier = Modifier.align(Alignment.Center),
                 )
 
                 PlayerBottomBar(
@@ -477,10 +452,6 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
                     showRemaining = showRemaining,
                     hasPrevious = viewModel.controller.hasPrevious,
                     hasNext = viewModel.controller.hasNext,
-                    locked = viewModel.locked,
-                    onTogglePlay = viewModel.controller::togglePlayPause,
-                    onPrevious = viewModel.controller::previous,
-                    onNext = viewModel.controller::next,
                     onSeekPreview = {
                         dragging = true
                         dragValue = it
@@ -492,47 +463,15 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
                     onToggleRemaining = { showRemaining = !showRemaining },
                     onSpeed = { sheet = PlayerSheet.SPEED },
                     onTracks = { sheet = PlayerSheet.TRACKS },
+                    onPrevious = viewModel.controller::previous,
+                    onNext = viewModel.controller::next,
                     onLock = {
                         viewModel.toggleLock()
                         controlsVisible = false
                     },
+                    onSettings = { sheet = PlayerSheet.SETTINGS },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
-
-                // 左侧锁屏
-                IconButtonColumn(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 12.dp),
-                ) {
-                    OverlayIconButton(
-                        icon = Icons.Default.Lock,
-                        onClick = {
-                            viewModel.toggleLock()
-                            controlsVisible = false
-                        },
-                    )
-                }
-
-                // 右侧截图 / 后台播放
-                IconButtonColumn(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 12.dp),
-                ) {
-                    OverlayIconButton(icon = XPlayerIcons.Camera, onClick = ::takeScreenshot)
-                    Spacer(Modifier.height(10.dp))
-                    OverlayIconButton(
-                        icon = XPlayerIcons.Headphones,
-                        onClick = {
-                            ensureNotificationPermission()
-                            if (startBackgroundAudio(context, viewModel, state.positionMs) != null) {
-                                serviceRunning = true
-                                viewModel.controller.pause()
-                            }
-                        },
-                    )
-                }
             }
         }
 
@@ -607,6 +546,54 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
             onChange = { viewModel.applySubtitleStyle(it) },
             onDismiss = { sheet = null },
         )
+        PlayerSheet.SETTINGS -> PlayerSettingsSheet(
+            engine = state.engine,
+            mpvAvailable = com.xplayer.app.player.engine.EngineAvailability.mpvAvailable,
+            aspectLabel = stringResource(viewModel.aspectMode.labelRes()),
+            rotationMode = rotationMode,
+            onSwitchEngine = { target ->
+                sheet = null
+                if (target != state.engine) viewModel.switchEngine(target)
+            },
+            onAspect = { sheet = PlayerSheet.ASPECT },
+            onSubtitleStyle = { sheet = PlayerSheet.SUBTITLE },
+            onScreenshot = {
+                sheet = null
+                takeScreenshot()
+            },
+            onBackgroundAudio = {
+                sheet = null
+                ensureNotificationPermission()
+                if (startBackgroundAudio(context, viewModel, state.positionMs) != null) {
+                    serviceRunning = true
+                    viewModel.controller.pause()
+                    scope.launch {
+                        snackbar.showSnackbar(context.getString(R.string.player_background_started))
+                    }
+                }
+            },
+            onPip = {
+                sheet = null
+                val ok = activity?.let {
+                    PipController.enter(it, state.videoWidth, state.videoHeight, state.isPlaying)
+                } ?: false
+                if (!ok) {
+                    scope.launch {
+                        snackbar.showSnackbar(context.getString(R.string.player_pip_failed))
+                    }
+                }
+            },
+            onRotate = { mode ->
+                rotationMode = mode
+                applyRotation(activity, mode)
+            },
+            onLock = {
+                sheet = null
+                viewModel.toggleLock()
+                controlsVisible = false
+            },
+            onDismiss = { sheet = null },
+        )
         null -> Unit
     }
 }
@@ -614,38 +601,24 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
 @Composable
 private fun PlayerTopBar(
     title: String,
-    engine: EngineType,
     onBack: () -> Unit,
-    onSwitchEngine: () -> Unit,
-    onAspect: () -> Unit,
-    moreExpanded: Boolean,
-    onMore: () -> Unit,
-    onDismissMore: () -> Unit,
-    onScreenshot: () -> Unit,
-    onBackgroundAudio: () -> Unit,
+    onRotate: () -> Unit,
     onPip: () -> Unit,
-    onRotate: (Int) -> Unit,
-    onSubtitleStyle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+        OverlayIconButton(
+            icon = Icons.AutoMirrored.Filled.ArrowBack,
+            onClick = onBack,
             contentDescription = stringResource(R.string.common_back),
-            tint = Color.White,
-            modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(50))
-                .clickable(onClick = onBack)
-                .padding(8.dp),
         )
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(6.dp))
         Text(
             text = title,
             color = Color.White,
@@ -654,63 +627,85 @@ private fun PlayerTopBar(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        Surface(
-            shape = RoundedCornerShape(50),
-            color = Color.White.copy(alpha = 0.16f),
-            modifier = Modifier.clickable(onClick = onSwitchEngine),
+        OverlayIconButton(
+            icon = XPlayerIcons.RotateScreen,
+            onClick = onRotate,
+            contentDescription = stringResource(R.string.player_rotate),
+        )
+        OverlayIconButton(
+            icon = XPlayerIcons.PictureInPicture,
+            onClick = onPip,
+            contentDescription = stringResource(R.string.player_pip),
+        )
+    }
+}
+
+/** 中央三键：后退 10s / 播放暂停 / 前进 10s，主按钮用主题强调色 */
+@Composable
+private fun PlayerCenterControls(
+    isPlaying: Boolean,
+    onRewind: () -> Unit,
+    onForward: () -> Unit,
+    onTogglePlay: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(26.dp),
+    ) {
+        SkipByTenButton(forward = false, onClick = onRewind)
+        Box(
+            modifier = Modifier
+                .size(62.dp)
+                .clip(RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.92f))
+                .clickable(onClick = onTogglePlay),
+            contentAlignment = Alignment.Center,
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(MaterialTheme.colorScheme.primary),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = if (engine == EngineType.MEDIA3) "Media3" else "mpv",
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
+            Icon(
+                imageVector = if (isPlaying) XPlayerIcons.Pause else Icons.Default.PlayArrow,
+                contentDescription = stringResource(
+                    if (isPlaying) R.string.player_pause else R.string.player_play,
+                ),
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(32.dp),
+            )
         }
-        OverlayIconButton(icon = XPlayerIcons.AspectRatio, onClick = onAspect)
-        Box {
-            OverlayIconButton(icon = Icons.Default.MoreVert, onClick = onMore)
-            DropdownMenu(expanded = moreExpanded, onDismissRequest = onDismissMore) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.player_screenshot)) },
-                    onClick = onScreenshot,
-                )
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.player_background_audio)) },
-                    onClick = onBackgroundAudio,
-                )
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.player_pip)) },
-                    onClick = onPip,
-                )
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.player_subtitle_style)) },
-                    onClick = onSubtitleStyle,
-                )
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.player_rotate_auto)) },
-                    onClick = { onRotate(0) },
-                )
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.player_rotate_landscape)) },
-                    onClick = { onRotate(1) },
-                )
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.player_rotate_portrait)) },
-                    onClick = { onRotate(2) },
-                )
-            }
+        SkipByTenButton(forward = true, onClick = onForward)
+    }
+}
+
+@Composable
+private fun SkipByTenButton(forward: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(52.dp)
+            .clip(RoundedCornerShape(50))
+            .background(Color.Black.copy(alpha = 0.35f))
+            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier.graphicsLayer(scaleX = if (forward) -1f else 1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = XPlayerIcons.Replay,
+                contentDescription = stringResource(
+                    if (forward) R.string.player_seek_forward_10 else R.string.player_seek_back_10,
+                ),
+                tint = Color.White,
+                modifier = Modifier.size(34.dp),
+            )
+            Text(
+                text = "10",
+                color = Color.White,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         }
     }
 }
@@ -723,16 +718,15 @@ private fun PlayerBottomBar(
     showRemaining: Boolean,
     hasPrevious: Boolean,
     hasNext: Boolean,
-    locked: Boolean,
-    onTogglePlay: () -> Unit,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
     onSeekPreview: (Float) -> Unit,
     onSeekCommit: (Float) -> Unit,
     onToggleRemaining: () -> Unit,
     onSpeed: () -> Unit,
     onTracks: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
     onLock: () -> Unit,
+    onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val duration = state.durationMs.coerceAtLeast(1L)
@@ -741,12 +735,12 @@ private fun PlayerBottomBar(
         modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = Formatters.duration(position),
-                color = Color.White,
+                color = Color.White.copy(alpha = 0.9f),
                 fontSize = 12.sp,
             )
             Slider(
@@ -756,7 +750,7 @@ private fun PlayerBottomBar(
                 valueRange = 0f..duration.toFloat(),
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 6.dp),
+                    .padding(horizontal = 8.dp),
                 colors = SliderDefaults.colors(
                     thumbColor = Color.White,
                     activeTrackColor = MaterialTheme.colorScheme.primary,
@@ -769,7 +763,7 @@ private fun PlayerBottomBar(
                 } else {
                     Formatters.duration(state.durationMs)
                 },
-                color = Color.White,
+                color = Color.White.copy(alpha = 0.9f),
                 fontSize = 12.sp,
                 modifier = Modifier.clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -781,41 +775,56 @@ private fun PlayerBottomBar(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             OverlayIconButton(
-                icon = XPlayerIcons.SkipPrevious,
-                enabled = hasPrevious,
-                onClick = onPrevious,
+                icon = Icons.Default.Lock,
+                onClick = onLock,
+                contentDescription = stringResource(R.string.player_lock),
             )
-            OverlayIconButton(
-                icon = if (state.isPlaying) XPlayerIcons.Pause else Icons.Default.PlayArrow,
-                size = 34.dp,
-                onClick = onTogglePlay,
-            )
-            OverlayIconButton(
-                icon = XPlayerIcons.SkipNext,
-                enabled = hasNext,
-                onClick = onNext,
-            )
-            Spacer(Modifier.width(6.dp))
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = Color.White.copy(alpha = 0.14f),
-                modifier = Modifier.clickable(onClick = onSpeed),
+            Spacer(Modifier.width(2.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(50),
+                    )
+                    .clickable(onClick = onSpeed)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
             ) {
                 Text(
                     text = "${Formatters.speed(state.speed)}×",
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                 )
             }
-            Spacer(Modifier.width(6.dp))
-            OverlayIconButton(icon = XPlayerIcons.Subtitles, onClick = onTracks)
+            Spacer(Modifier.width(2.dp))
+            OverlayIconButton(
+                icon = XPlayerIcons.Subtitles,
+                onClick = onTracks,
+                contentDescription = stringResource(R.string.player_tracks),
+            )
             Spacer(Modifier.weight(1f))
-            OverlayIconButton(icon = XPlayerIcons.Fullscreen, onClick = onLock)
+            OverlayIconButton(
+                icon = XPlayerIcons.SkipPrevious,
+                enabled = hasPrevious,
+                onClick = onPrevious,
+                contentDescription = stringResource(R.string.player_prev),
+            )
+            OverlayIconButton(
+                icon = XPlayerIcons.SkipNext,
+                enabled = hasNext,
+                onClick = onNext,
+                contentDescription = stringResource(R.string.player_next),
+            )
+            OverlayIconButton(
+                icon = Icons.Default.Settings,
+                onClick = onSettings,
+                contentDescription = stringResource(R.string.player_settings),
+            )
         }
     }
 }
@@ -826,10 +835,11 @@ private fun OverlayIconButton(
     onClick: () -> Unit,
     enabled: Boolean = true,
     size: androidx.compose.ui.unit.Dp = 30.dp,
+    contentDescription: String? = null,
 ) {
     Icon(
         imageVector = icon,
-        contentDescription = null,
+        contentDescription = contentDescription,
         tint = Color.White.copy(alpha = if (enabled) 0.95f else 0.3f),
         modifier = Modifier
             .size(size + 12.dp)
@@ -839,16 +849,13 @@ private fun OverlayIconButton(
     )
 }
 
-@Composable
-private fun IconButtonColumn(modifier: Modifier = Modifier, content: @Composable ColumnScopeAlias.() -> Unit) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        content = content,
-    )
+private fun applyRotation(activity: Activity?, mode: Int) {
+    activity?.requestedOrientation = when (mode) {
+        1 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        2 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    }
 }
-
-private typealias ColumnScopeAlias = androidx.compose.foundation.layout.ColumnScope
 
 private fun startBackgroundAudio(
     context: Context,

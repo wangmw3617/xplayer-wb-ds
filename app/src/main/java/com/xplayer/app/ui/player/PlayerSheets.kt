@@ -3,6 +3,8 @@ package com.xplayer.app.ui.player
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,6 +41,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import com.xplayer.app.player.engine.EngineType
 import com.xplayer.app.R
 import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.SubtitlePrefs
@@ -447,3 +453,276 @@ fun SubtitleStyleSheet(
 
 @Composable
 fun fileLabel(path: String): String = File(path).name
+
+/**
+ * 播放页二级菜单：内核切换、画面与常用操作都收在这里，
+ * 一级界面上只保留高频按钮，布局向 YouTube 靠，但配色/圆角跟随应用主题。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlayerSettingsSheet(
+    engine: EngineType,
+    mpvAvailable: Boolean,
+    aspectLabel: String,
+    rotationMode: Int,
+    onSwitchEngine: (EngineType) -> Unit,
+    onAspect: () -> Unit,
+    onSubtitleStyle: () -> Unit,
+    onScreenshot: () -> Unit,
+    onBackgroundAudio: () -> Unit,
+    onPip: () -> Unit,
+    onRotate: (Int) -> Unit,
+    onLock: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.player_settings),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+
+            PlayerSheetSectionTitle(stringResource(R.string.player_settings_engine))
+            PlayerEngineRow(
+                title = "Media3",
+                subtitle = stringResource(R.string.player_engine_media3_desc),
+                icon = XPlayerIcons.Video,
+                selected = engine == EngineType.MEDIA3,
+                enabled = true,
+                onClick = { onSwitchEngine(EngineType.MEDIA3) },
+            )
+            PlayerEngineRow(
+                title = "libmpv",
+                subtitle = if (mpvAvailable) {
+                    stringResource(R.string.player_engine_mpv_desc)
+                } else {
+                    stringResource(R.string.player_engine_unavailable)
+                },
+                icon = XPlayerIcons.Memory,
+                selected = engine == EngineType.MPV,
+                enabled = mpvAvailable,
+                onClick = { onSwitchEngine(EngineType.MPV) },
+            )
+            Text(
+                text = stringResource(R.string.player_engine_switch_hint),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+            )
+
+            PlayerSheetSectionTitle(stringResource(R.string.player_section_picture))
+            PlayerSheetRow(
+                icon = XPlayerIcons.AspectRatio,
+                title = stringResource(R.string.player_aspect),
+                subtitle = aspectLabel,
+                onClick = onAspect,
+            )
+            PlayerSheetRow(
+                icon = XPlayerIcons.Subtitles,
+                title = stringResource(R.string.player_subtitle_style),
+                onClick = onSubtitleStyle,
+            )
+            PlayerSheetRow(
+                icon = XPlayerIcons.RotateScreen,
+                title = stringResource(R.string.player_orientation),
+                subtitle = stringResource(
+                    when (rotationMode) {
+                        1 -> R.string.player_rotate_landscape
+                        2 -> R.string.player_rotate_portrait
+                        else -> R.string.player_rotate_auto
+                    },
+                ),
+                trailing = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(0, 1, 2).forEach { mode ->
+                            val selected = rotationMode == mode
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        if (selected) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceContainerHigh
+                                        },
+                                    )
+                                    .clickable { onRotate(mode) }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    text = stringResource(
+                                        when (mode) {
+                                            1 -> R.string.player_rotate_landscape
+                                            2 -> R.string.player_rotate_portrait
+                                            else -> R.string.player_rotate_auto
+                                        },
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (selected) {
+                                        MaterialTheme.colorScheme.onPrimary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                            }
+                        }
+                    }
+                },
+                onClick = {},
+            )
+
+            PlayerSheetSectionTitle(stringResource(R.string.player_section_actions))
+            PlayerSheetRow(
+                icon = XPlayerIcons.Camera,
+                title = stringResource(R.string.player_screenshot),
+                onClick = onScreenshot,
+            )
+            PlayerSheetRow(
+                icon = XPlayerIcons.Headphones,
+                title = stringResource(R.string.player_background_audio),
+                onClick = onBackgroundAudio,
+            )
+            PlayerSheetRow(
+                icon = XPlayerIcons.PictureInPicture,
+                title = stringResource(R.string.player_pip),
+                onClick = onPip,
+            )
+            PlayerSheetRow(
+                icon = Icons.Default.Lock,
+                title = stringResource(R.string.player_lock),
+                onClick = onLock,
+            )
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun PlayerSheetSectionTitle(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 4.dp, top = 14.dp, bottom = 4.dp),
+    )
+}
+
+@Composable
+private fun PlayerEngineRow(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = enabled && !selected, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(MaterialTheme.colorScheme.onPrimary),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerSheetRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (trailing != null) {
+            Spacer(Modifier.width(8.dp))
+            trailing()
+        } else {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}

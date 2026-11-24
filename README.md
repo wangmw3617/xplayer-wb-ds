@@ -1,6 +1,6 @@
 # XPlayer
 
-面向本地高清片源的 Android 播放器，复刻 FlClash 的 Material 3 视觉语言，内置 **Media3 + libmpv 双内核**，按片源特征自动选择解码内核，并可在播放页一键热切换。
+面向本地高清片源的 Android 播放器，复刻 FlClash 的 Material 3 视觉语言，内置 **Media3 + libmpv 双内核**，按片源特征自动选择解码内核，并可在播放页「播放设置」里热切换。
 
 > 实现依据：`xplayer_prd.md`（XPlayer 产品需求与架构设计文档）
 
@@ -11,7 +11,7 @@
 | 域 | 已实现 |
 | --- | --- |
 | 视觉 | FlClash 风格 4-Tab 药丸底栏、LargeTopAppBar 折叠、分组卡片 + ModalBottomSheet 选择器、动态取色 / 6 套种子色 / 深色·浅色·跟随系统·AMOLED 纯黑 |
-| 引擎 | `PlayerEngine` 统一接口，Media3（ExoPlayer + FFmpeg 音频扩展）为主、libmpv 为备；`EngineRouter` 智能路由；播放页药丸按钮热切换；解码失败自动回退 mpv |
+| 引擎 | `PlayerEngine` 统一接口，Media3（ExoPlayer + FFmpeg 音频扩展）为主、libmpv 为备；`EngineRouter` 智能路由；播放页「播放设置」二级菜单内热切换；解码失败自动回退 mpv |
 | 媒体库 | `MANAGE_EXTERNAL_STORAGE`（Android 11+）/ `READ_EXTERNAL_STORAGE`（Android 10）引导，全盘增量扫描、元数据与封面抽取、4K / DV / HDR / HEVC / ASS 徽章、搜索 + 排序 + 网格/列表切换 |
 | 手势 | 亮度·音量竖向滑动、横向滑动快进、双击分区（左/中/右可配）、长按倍速并拖动调节、双指缩放、边缘防误触、锁屏 |
 | 字幕 | 内封/外挂轨道切换、外挂字幕导入、±100ms/±500ms 时间轴微调与归零、字号/颜色/描边/阴影/背景条/底部边距自定义、ASS 特效保护开关 |

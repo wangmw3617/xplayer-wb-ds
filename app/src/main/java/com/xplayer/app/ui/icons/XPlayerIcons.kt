@@ -227,6 +227,28 @@ object XPlayerIcons {
             Vec("M10.5,7.8 v5.4"),
         )
     }
+
+    /** 快退/快进 10 秒用的回环箭头（forward 时由调用方水平镜像） */
+    val Replay: ImageVector by lazy {
+        vector(
+            "Replay",
+            Vec(
+                "m12,5 v-4 l-5,5 5,5 v-4 c3.3,0 6,2.7 6,6 s-2.7,6 -6,6 -6,-2.7 -6,-6 h-2 " +
+                    "c0,4.4 3.6,8 8,8 s8,-3.6 8,-8 -3.6,-8 -8,-8 z",
+                filled = true,
+            ),
+        )
+    }
+
+    /** 屏幕旋转 */
+    val RotateScreen: ImageVector by lazy {
+        vector(
+            "RotateScreen",
+            Vec("M8.4,3.6 h5.2 a1.5,1.5 0 0 1 1.5,1.5 v13.8 a1.5,1.5 0 0 1 -1.5,1.5 h-5.2 a1.5,1.5 0 0 1 -1.5,-1.5 v-13.8 a1.5,1.5 0 0 1 1.5,-1.5"),
+            Vec("M17.2,8 a6.4,6.4 0 0 1 0,8"),
+            Vec("M19.2,6.2 L17.2,8 L16.7,5.5"),
+        )
+    }
 }
 
 private class Vec(val data: String, val filled: Boolean = false, val width: Float = 1.7f)

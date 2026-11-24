@@ -333,6 +333,20 @@
     <string name="player_long_speed">%1$s×</string>
     <string name="player_track_language_unknown">Undetermined</string>
     <string name="player_engine_unavailable">libmpv is unavailable</string>
+    <string name="player_play">Play</string>
+    <string name="player_pause">Pause</string>
+    <string name="player_settings">Playback settings</string>
+    <string name="player_settings_engine">Playback engine</string>
+    <string name="player_engine_media3_desc">Hardware decoding first · default</string>
+    <string name="player_engine_mpv_desc">Software decoding &amp; advanced rendering · ASS subtitles</string>
+    <string name="player_engine_switch_hint">Switching reloads the picture from the current position</string>
+    <string name="player_section_picture">Picture</string>
+    <string name="player_section_actions">Actions</string>
+    <string name="player_seek_back_10">Back 10 seconds</string>
+    <string name="player_seek_forward_10">Forward 10 seconds</string>
+    <string name="player_lock">Lock screen</string>
+    <string name="player_rotate">Rotate screen</string>
+    <string name="player_orientation">Orientation</string>
 
     <!-- Network -->
     <string name="network_title">Network stream</string>

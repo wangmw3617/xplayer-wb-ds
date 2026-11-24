@@ -323,6 +323,20 @@
     <string name="player_long_speed">%1$s 倍</string>
     <string name="player_track_language_unknown">未标注语言</string>
     <string name="player_engine_unavailable">libmpv 当前不可用</string>
+    <string name="player_play">播放</string>
+    <string name="player_pause">暂停</string>
+    <string name="player_settings">播放设置</string>
+    <string name="player_settings_engine">播放内核</string>
+    <string name="player_engine_media3_desc">硬件解码优先 · 默认</string>
+    <string name="player_engine_mpv_desc">软解与高级渲染 · ASS 字幕</string>
+    <string name="player_engine_switch_hint">切换内核会从当前位置重新加载画面</string>
+    <string name="player_section_picture">画面</string>
+    <string name="player_section_actions">操作</string>
+    <string name="player_seek_back_10">后退 10 秒</string>
+    <string name="player_seek_forward_10">前进 10 秒</string>
+    <string name="player_lock">锁定屏幕</string>
+    <string name="player_rotate">旋转屏幕</string>
+    <string name="player_orientation">屏幕方向</string>
 
     <string name="network_title">网络直链</string>
     <string name="network_url">地址</string>

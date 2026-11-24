@@ -125,7 +125,11 @@ fun SettingRow(
         }
         if (showDivider) {
             HorizontalDivider(
-                modifier = Modifier.padding(start = if (icon != null) 56.dp else 16.dp),
+                // 右侧留白：分割线不要顶到卡片边，视觉上更松弛
+                modifier = Modifier.padding(
+                    start = if (icon != null) 56.dp else 20.dp,
+                    end = 20.dp,
+                ),
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
             )
         }
