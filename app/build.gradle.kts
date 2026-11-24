@@ -18,13 +18,9 @@ android {
         applicationId = "com.xplayer.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.2.0"
         vectorDrawables { useSupportLibrary = true }
-        ndk {
-            // 通用包：四个 ABI 全部打进同一个 APK（libmpv 与 Media3 FFmpeg 均提供这四套）
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-        }
     }
 
     signingConfigs {
@@ -55,10 +51,13 @@ android {
         }
     }
 
-    // 不开 ABI 分包：只出一个通用包，任何设备（含模拟器 x86_64）都能直接装
+    // 按 ABI 分包发布：release 页提供四个架构各自的包，另加一个 universal 兜底
     splits {
         abi {
-            isEnable = false
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
         }
     }
 

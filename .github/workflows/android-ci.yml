@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build universal APK
+    name: Build multi-ABI APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -47,28 +47,35 @@ jobs:
       - name: Compile & lint
         run: ./gradlew compileDebugKotlin lintDebug --stacktrace
 
-      - name: Assemble debug APK
+      # ---------- debug 包：四个架构 + universal ----------
+
+      - name: Assemble debug APKs
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Locate debug APK
-        id: apk
+      - name: Package debug APKs
         run: |
           set -e
-          APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -n 1)
-          if [ -z "$APK" ]; then
-            echo "APK not found" >&2
+          mkdir -p dist/debug
+          shopt -s nullglob
+          count=0
+          for apk in app/build/outputs/apk/debug/*.apk; do
+            base=$(basename "$apk" .apk)      # app-arm64-v8a-debug
+            variant=${base#app-}              # arm64-v8a-debug
+            abi=${variant%-debug}             # arm64-v8a / universal
+            cp "$apk" "dist/debug/XPlayer-${abi}-debug.apk"
+            count=$((count + 1))
+          done
+          if [ "$count" -eq 0 ]; then
+            echo "debug APK not found" >&2
             exit 1
           fi
-          TARGET=app/build/outputs/apk/debug/XPlayer-universal-debug.apk
-          cp "$APK" "$TARGET"
-          echo "path=$TARGET" >> "$GITHUB_OUTPUT"
-          ls -lh "$TARGET"
+          ls -lh dist/debug
 
-      - name: Upload debug APK
+      - name: Upload debug APKs
         uses: actions/upload-artifact@v7
         with:
-          name: XPlayer-universal-debug
-          path: app/build/outputs/apk/debug/XPlayer-universal-debug.apk
+          name: XPlayer-debug-apks
+          path: dist/debug/*.apk
           retention-days: 14
           if-no-files-found: error
 
@@ -96,30 +103,43 @@ jobs:
             echo "::warning::未配置 keystore secrets，release APK 回退 debug 证书签名（可安装，但不可上架）。"
           fi
 
-      - name: Assemble release APK
+      - name: Assemble release APKs
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.build_release
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Package release APKs
         if: startsWith(github.ref, 'refs/tags/v') || inputs.build_release
         run: |
           set -e
-          ./gradlew assembleRelease --stacktrace
-          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
-          if [ -z "$APK" ]; then
-            echo "Release APK not found" >&2
+          mkdir -p dist/release
+          shopt -s nullglob
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          count=0
+          for apk in app/build/outputs/apk/release/*.apk; do
+            base=$(basename "$apk" .apk)      # app-arm64-v8a-release
+            variant=${base#app-}              # arm64-v8a-release
+            abi=${variant%-release}           # arm64-v8a / universal
+            target="dist/release/XPlayer-${abi}-release.apk"
+            cp "$apk" "$target"
+            count=$((count + 1))
+            echo "----- XPlayer-${abi}-release.apk"
+            "$BUILD_TOOLS/apksigner" verify --print-certs "$target" | grep -m1 "certificate DN" || true
+            "$BUILD_TOOLS/aapt2" dump badging "$target" \
+              | grep -E "^package: name|^native-code" \
+              | sed -E 's/platformBuildVersion.*//'
+          done
+          if [ "$count" -eq 0 ]; then
+            echo "release APK not found" >&2
             exit 1
           fi
-          TARGET=app/build/outputs/apk/release/XPlayer-universal-release.apk
-          cp "$APK" "$TARGET"
-          ls -lh "$TARGET"
-          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-          "$BUILD_TOOLS/apksigner" verify --print-certs "$TARGET" | head -n 6 || true
-          echo "=== ABI 校验"
-          "$BUILD_TOOLS/aapt2" dump badging "$TARGET" | grep -E "^native-code|^package"
+          ls -lh dist/release
 
-      - name: Upload release APK
+      - name: Upload release APKs
         if: startsWith(github.ref, 'refs/tags/v') || inputs.build_release
         uses: actions/upload-artifact@v7
         with:
-          name: XPlayer-universal-release
-          path: app/build/outputs/apk/release/XPlayer-universal-release.apk
+          name: XPlayer-release-apks
+          path: dist/release/*.apk
           retention-days: 14
           if-no-files-found: error
 
@@ -132,6 +152,19 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            app/build/outputs/apk/release/XPlayer-universal-release.apk
-            app/build/outputs/apk/debug/XPlayer-universal-debug.apk
+            dist/release/*.apk
+            dist/debug/*.apk
           generate_release_notes: true
+          body: |
+            ## 按架构选择安装包
+
+            | 设备 | 下载文件 |
+            | --- | --- |
+            | 绝大多数手机 / 平板（2017 年后，arm64） | `XPlayer-arm64-v8a-release.apk` |
+            | 老设备 / 32 位 ROM（armeabi-v7a） | `XPlayer-armeabi-v7a-release.apk` |
+            | 模拟器（x86 / x86_64） | `XPlayer-x86-release.apk`、`XPlayer-x86_64-release.apk` |
+            | 不确定，想一个包通吃 | `XPlayer-universal-release.apk` |
+
+            安装：`adb install -r <文件名>`；不确定机型架构可执行 `adb shell getprop ro.product.cpu.abi` 查看。
+
+            `*-debug.apk` 为调试包，用于排查问题，日常使用请装 release 包。
