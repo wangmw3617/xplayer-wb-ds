@@ -3,6 +3,7 @@ package com.xplayer.app.player.engine
 import com.xplayer.app.data.datastore.AppSettings
 import com.xplayer.app.data.datastore.EnginePolicy
 import com.xplayer.app.data.scanner.SubtitleFinder
+import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.MediaSource
 
@@ -14,6 +15,7 @@ enum class EngineReason {
     FORCED_MPV,
     MANUAL,
     FALLBACK,
+    EXTERNAL_URI,
 }
 
 data class EngineDecision(val engine: EngineType, val reason: EngineReason)
@@ -36,6 +38,10 @@ class EngineRouter {
         val mpvReady = EngineAvailability.mpvAvailable
         if (!mpvReady) {
             return EngineDecision(EngineType.MEDIA3, EngineReason.FALLBACK)
+        }
+        // 外部应用传入的 content:// 只能交给 Media3（mpv 读不了 SAF 文档）
+        if (source is ContentUriSource) {
+            return EngineDecision(EngineType.MEDIA3, EngineReason.EXTERNAL_URI)
         }
         if (preferred != null) {
             return EngineDecision(preferred, EngineReason.MANUAL)

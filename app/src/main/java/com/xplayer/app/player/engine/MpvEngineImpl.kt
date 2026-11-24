@@ -7,6 +7,7 @@ import android.view.View
 import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.MpvHwDecoder
 import com.xplayer.app.data.datastore.SubtitlePrefs
+import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.MediaSource
 import com.xplayer.app.data.source.NetworkUrlSource
@@ -64,6 +65,14 @@ class MpvEngineImpl(
             return
         }
         if (!ensureInitialized(view)) return
+        if (source is ContentUriSource) {
+            // mpv 无法直接打开 content://，路由层已拦截，这里只做兜底
+            _state.value = _state.value.copy(
+                error = "MPV_CONTENT_URI_UNSUPPORTED",
+                isBuffering = false,
+            )
+            return
+        }
 
         this.subtitleStyle = subtitleStyle
         runCatching {
@@ -77,6 +86,7 @@ class MpvEngineImpl(
             }
             val target = when (source) {
                 is LocalFileSource -> source.path
+                is ContentUriSource -> source.uri
                 is NetworkUrlSource -> source.url
             }
             view.playFile(target)

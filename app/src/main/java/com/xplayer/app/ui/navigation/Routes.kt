@@ -20,6 +20,8 @@ object Routes {
 
     const val PLAYER = "player?type={type}&key={key}&title={title}&start={start}&ass={ass}"
 
+    const val MEDIA_INFO = "media/info?type={type}&key={key}&title={title}"
+
     val mainTabs = listOf(HOME, VIDEOS, FOLDERS, SETTINGS)
 
     fun player(
@@ -30,4 +32,7 @@ object Routes {
         hasEmbeddedAss: Boolean = false,
     ): String = "player?type=$sourceType&key=${Uri.encode(key)}&title=${Uri.encode(title)}" +
         "&start=$startMs&ass=$hasEmbeddedAss"
+
+    fun mediaInfo(sourceType: String, key: String, title: String): String =
+        "media/info?type=$sourceType&key=${Uri.encode(key)}&title=${Uri.encode(title)}"
 }

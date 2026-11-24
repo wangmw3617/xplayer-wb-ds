@@ -12,6 +12,7 @@ import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.SubtitlePrefs
 import com.xplayer.app.data.local.SourceType
 import com.xplayer.app.data.scanner.SubtitleFinder
+import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.MediaSource
 import com.xplayer.app.data.source.NetworkUrlSource
@@ -61,6 +62,14 @@ class PlayerViewModel(
         private set
 
     val isLocal: Boolean = sourceType == "local"
+
+    /** 外部应用「打开方式」传入的 content:// 源 */
+    private val isExternalUri: Boolean = sourceType == "uri"
+
+    /** 供「媒体信息」页复用当前源 */
+    val sourceKind: String get() = sourceType
+    val sourceKey: String get() = key
+    val sourceTitle: String get() = titleArg
 
     init {
         load()
@@ -113,6 +122,15 @@ class PlayerViewModel(
                     preferredEngine = history?.preferredEngine?.let { raw ->
                         runCatching { EngineType.valueOf(raw) }.getOrNull()
                     },
+                )
+            } else if (isExternalUri) {
+                resumePosition.value = startArg
+                controller.open(
+                    source = ContentUriSource(
+                        uri = key,
+                        displayName = titleArg.ifBlank { key },
+                    ),
+                    startPositionMs = startArg,
                 )
             } else {
                 val history = container.playbackRepository.find(key, SourceType.NETWORK)

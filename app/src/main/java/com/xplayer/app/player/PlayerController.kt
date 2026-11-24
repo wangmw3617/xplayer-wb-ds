@@ -12,6 +12,7 @@ import com.xplayer.app.data.datastore.SubtitlePrefs
 import com.xplayer.app.data.local.SourceType
 import com.xplayer.app.data.repository.PlaybackRepository
 import com.xplayer.app.data.repository.ShaderRepository
+import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.MediaSource
 import com.xplayer.app.data.source.SidecarSubtitle
 import com.xplayer.app.player.engine.EngineAvailability
@@ -163,6 +164,10 @@ class PlayerController(
             _notice.tryEmit(PlayerNotice(R.string.player_engine_unavailable))
             return
         }
+        if (target == EngineType.MPV && source is ContentUriSource) {
+            _notice.tryEmit(PlayerNotice(R.string.player_engine_uri_media3_only))
+            return
+        }
         val position = _state.value.positionMs
         val resumeSpeed = if (_state.value.speed > 0f) _state.value.speed else currentSpeed
         persistPositionNow()
@@ -293,6 +298,8 @@ class PlayerController(
     }
 
     private fun handleEngineError(failedEngine: PlayerEngine, error: String) {
+        // content:// 换 mpv 也没用，直接停在报错上
+        if (source is ContentUriSource) return
         if (failedEngine.type == EngineType.MEDIA3 && !fallbackAttempted && EngineAvailability.mpvAvailable) {
             fallbackAttempted = true
             Log.w(TAG, "Media3 failed ($error), falling back to libmpv")
@@ -321,6 +328,8 @@ class PlayerController(
 
     private suspend fun persist() {
         val src = source ?: return
+        // 外部 content:// 的临时授权重启后失效，落库只会留下点不开的僵尸记录
+        if (src is ContentUriSource) return
         val snapshot = _state.value
         if (snapshot.durationMs <= 0) return
         if (snapshot.positionMs < 1_000L && !snapshot.ended) return

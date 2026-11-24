@@ -77,6 +77,7 @@ import com.xplayer.app.util.Formatters
 @Composable
 fun VideosScreen(
     onPlay: (VideoEntity, Long) -> Unit,
+    onOpenInfo: (VideoEntity) -> Unit = {},
 ) {
     val viewModel = rememberAppVM { VideosViewModel(it) }
     val items by viewModel.items.collectAsState()
@@ -269,6 +270,10 @@ fun VideosScreen(
             onRename = { name ->
                 viewModel.rename(video, name)
                 selected = null
+            },
+            onOpenInfo = {
+                selected = null
+                onOpenInfo(video)
             },
             onDelete = {
                 viewModel.delete(video)

@@ -29,6 +29,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.SubtitlePrefs
+import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.MediaSource
 import com.xplayer.app.data.source.NetworkUrlSource
@@ -207,6 +208,7 @@ class Media3EngineImpl(
         val builder = MediaItem.Builder()
         when (source) {
             is LocalFileSource -> builder.setUri(android.net.Uri.fromFile(File(source.path)))
+            is ContentUriSource -> builder.setUri(android.net.Uri.parse(source.uri))
             is NetworkUrlSource -> builder.setUri(android.net.Uri.parse(source.url))
         }
         val subtitles = buildList {

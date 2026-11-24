@@ -18,6 +18,8 @@
 | 进阶 | 当前帧截图（PixelCopy / mpv screenshot-raw）、MediaSessionService 后台纯音频、画中画（手动 + 按 Home 自动进）、3 秒断点续播与 95% 看完判定、自动连播 |
 | 极客 | `mpv.conf` 内置编辑器 + 预设片段、GLSL 着色器导入/启用/排序/总开关、`MediaCodecList` 硬件解码体检面板 |
 | 网络 | 首页直链卡片（支持自定义 HTTP Headers）、历史记录管理 |
+| 外部打开 | 其他文件管理器里「打开方式」直接起播：`video/*`、`audio/*` 两类 MIME + 常见扩展名兜底；`content://` 能反解成真实路径时（同盘、下载、媒体库）自动获得 mpv 内核、连播与外挂字幕能力，反解不了则走 Media3 播 SAF 文档 |
+| 媒体信息 | 容器 / 时长 / 总码率 + 逐轨解析：编码、档位与级别、codec string、分辨率、帧率、色彩（BT.709/BT.2020、PQ/HLG、Full/Limited）、声道、采样率、语言、默认轨；本地文件、`content://`、纯音频文件都支持 |
 
 ## 2. 技术栈
 
@@ -38,7 +40,8 @@ app/src/main/java/com/xplayer/app/
 │   ├── local/          # Room 实体 / DAO / Database
 │   ├── repository/     # 视频、进度、屏蔽目录、直链、着色器
 │   ├── scanner/        # 全盘扫描、元数据与封面、轨道探测、外挂字幕发现
-│   └── source/         # MediaSource 抽象（本地文件 / 网络直链，为 V2 预留）
+│   ├── media/          # 媒体信息探测（容器 + 逐轨参数，支持本地 / content URI / 纯音频）
+│   └── source/         # MediaSource 抽象（本地文件 / content URI / 网络直链）+ Uri 解析
 ├── player/
 │   ├── engine/         # PlayerEngine 接口、Media3EngineImpl、MpvEngineImpl、EngineRouter
 │   ├── pip/            # PiP 控制器、RemoteAction 广播接收器
@@ -48,7 +51,7 @@ app/src/main/java/com/xplayer/app/
 │   └── ScreenshotSaver.kt
 ├── ui/
 │   ├── navigation/     # Routes、FlClash 风格底栏
-│   ├── home / videos / folders / settings / player / components / icons / theme / permission
+│   ├── home / videos / folders / settings / player / media / components / icons / theme / permission
 │   └── ...
 ├── MainActivity.kt     # NavHost 宿主、权限流程、自动扫描、PiP 生命周期回调
 └── XPlayerApp.kt       # Application + AppContainer
@@ -133,6 +136,7 @@ gh workflow run "Android CI" --repo wangmw3617/xplayer-wb-ds -f build_release=tr
 - Android 11+ 申请「所有文件访问权限」，用于遍历任意目录（含外置存储根与隐藏目录）
 - Android 10 使用 `READ_EXTERNAL_STORAGE`
 - 拒绝授权时首页展示降级提示，可一键重新授权；库为空时给出引导卡片
+- 从其他应用「打开方式」进来的单个文件走系统授予的 Uri 权限，**不需要全盘权限**也能播放；这类来源不写播放记录（临时授权重启后失效）
 
 ## 7. 已知限制
 
@@ -142,3 +146,5 @@ gh workflow run "Android CI" --repo wangmw3617/xplayer-wb-ds -f build_release=tr
 - 分包后各 ABI 包的 `versionCode` 相同（AGP 未启用 ABI 偏移），走 GitHub 分发无影响；若要上 Google Play 多 APK 分发，需要给 `splits.abi` 配 versionCode 偏移。
 - 着色器「组合预设位」（自定义保存番剧超分方案）尚未实现，目前支持单条启用/排序/总开关与 `mpv.conf` 预设片段。
 - 未在真机验证 HDR/DV 点亮与 Anime4K 实际渲染效果，需按 PRD 里程碑做真机验收。
+- 外部 `content://` 来源只能走 Media3（libmpv 读不了 SAF 文档），播放设置里 libmpv 会置灰；网络直链的轨道参数需开始拉流后才可读取。
+- 媒体信息基于 `MediaExtractor`，个别封装（如部分 MKV 的 Dolby Vision、ASS 轨道）读不全时会退化为文件名特征判断或不显示该轨。

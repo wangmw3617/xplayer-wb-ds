@@ -345,4 +345,41 @@
     <string name="network_headers">自定义 HTTP 头</string>
     <string name="network_headers_hint">Referer: https://example.com</string>
     <string name="network_history_empty">还没有直链记录</string>
+
+    <!-- 媒体信息 / 外部打开 -->
+    <string name="action_media_info">媒体信息</string>
+    <string name="info_title">媒体信息</string>
+    <string name="info_loading">正在分析…</string>
+    <string name="info_failed">无法读取该媒体文件</string>
+    <string name="info_group_file">文件</string>
+    <string name="info_file_name">名称</string>
+    <string name="info_file_location">位置</string>
+    <string name="info_file_size">大小</string>
+    <string name="info_file_modified">修改时间</string>
+    <string name="info_group_container">封装</string>
+    <string name="info_container">格式</string>
+    <string name="info_duration">时长</string>
+    <string name="info_bitrate">码率</string>
+    <string name="info_track_count">轨道数</string>
+    <string name="info_group_video">视频轨</string>
+    <string name="info_group_audio">音频轨</string>
+    <string name="info_group_subtitle">字幕轨</string>
+    <string name="info_group_sidecar">外挂字幕</string>
+    <string name="info_codec">编码</string>
+    <string name="info_profile">档位</string>
+    <string name="info_codec_string">编码标识</string>
+    <string name="info_resolution">分辨率</string>
+    <string name="info_frame_rate">帧率</string>
+    <string name="info_color">色彩</string>
+    <string name="info_hdr">动态范围</string>
+    <string name="info_rotation">旋转</string>
+    <string name="info_channels">声道</string>
+    <string name="info_sample_rate">采样率</string>
+    <string name="info_language">语言</string>
+    <string name="info_track_title">轨道名称</string>
+    <string name="info_default">默认</string>
+    <string name="info_network_note">流媒体的轨道参数需要开始播放后才能读取</string>
+    <string name="info_empty_tracks">没有轨道信息</string>
+    <string name="player_engine_uri_media3_only">外部文件仅支持 Media3 内核</string>
+    <string name="player_open_unsupported">无法打开该文件</string>
 </resources>

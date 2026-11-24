@@ -356,4 +356,41 @@
     <string name="network_headers">Custom HTTP headers</string>
     <string name="network_headers_hint">Referer: https://example.com</string>
     <string name="network_history_empty">No direct links yet</string>
+
+    <!-- Media info / open with -->
+    <string name="action_media_info">Media info</string>
+    <string name="info_title">Media info</string>
+    <string name="info_loading">Analyzing…</string>
+    <string name="info_failed">Couldn\'t read this media file</string>
+    <string name="info_group_file">File</string>
+    <string name="info_file_name">Name</string>
+    <string name="info_file_location">Location</string>
+    <string name="info_file_size">Size</string>
+    <string name="info_file_modified">Modified</string>
+    <string name="info_group_container">Container</string>
+    <string name="info_container">Format</string>
+    <string name="info_duration">Duration</string>
+    <string name="info_bitrate">Bitrate</string>
+    <string name="info_track_count">Tracks</string>
+    <string name="info_group_video">Video</string>
+    <string name="info_group_audio">Audio</string>
+    <string name="info_group_subtitle">Subtitles</string>
+    <string name="info_group_sidecar">External subtitles</string>
+    <string name="info_codec">Codec</string>
+    <string name="info_profile">Profile</string>
+    <string name="info_codec_string">Codec string</string>
+    <string name="info_resolution">Resolution</string>
+    <string name="info_frame_rate">Frame rate</string>
+    <string name="info_color">Color</string>
+    <string name="info_hdr">Dynamic range</string>
+    <string name="info_rotation">Rotation</string>
+    <string name="info_channels">Channels</string>
+    <string name="info_sample_rate">Sample rate</string>
+    <string name="info_language">Language</string>
+    <string name="info_track_title">Track name</string>
+    <string name="info_default">Default</string>
+    <string name="info_network_note">Stream parameters are only available after the stream starts</string>
+    <string name="info_empty_tracks">No track information</string>
+    <string name="player_engine_uri_media3_only">External files can only use the Media3 engine</string>
+    <string name="player_open_unsupported">Can\'t open this file</string>
 </resources>

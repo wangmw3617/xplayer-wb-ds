@@ -41,3 +41,19 @@ data class NetworkUrlSource(
     override val isLocal: Boolean get() = false
     override val folderPath: String? get() = null
 }
+
+/**
+ * 外部应用「打开方式」传入的 content:// 源（文件管理器、下载、云盘等）。
+ *
+ * 与 [LocalFileSource] 的区别：没有稳定可读的绝对路径，只能通过 ContentResolver 访问，
+ * 因此 mpv 内核与目录连播不适用，播放记录也不落库（临时授权在重启后会失效）。
+ */
+data class ContentUriSource(
+    val uri: String,
+    override val displayName: String,
+    val mimeType: String? = null,
+) : MediaSource {
+    override val key: String get() = uri
+    override val isLocal: Boolean get() = true
+    override val folderPath: String? get() = null
+}

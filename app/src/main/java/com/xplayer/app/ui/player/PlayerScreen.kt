@@ -86,6 +86,7 @@ import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.BackgroundBehavior
 import com.xplayer.app.data.datastore.GestureAction
 import com.xplayer.app.data.datastore.labelRes
+import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.NetworkUrlSource
 import com.xplayer.app.data.source.SidecarSubtitle
@@ -104,7 +105,11 @@ import kotlin.math.roundToInt
 private enum class PlayerSheet { TRACKS, SPEED, ASPECT, SUBTITLE, SETTINGS }
 
 @Composable
-fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
+fun PlayerScreen(
+    viewModel: PlayerViewModel,
+    onBack: () -> Unit,
+    onOpenMediaInfo: () -> Unit = {},
+) {
     val engine by viewModel.engine.collectAsState()
     val state by viewModel.state.collectAsState()
     val settings by viewModel.settings.collectAsState()
@@ -549,6 +554,7 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
         PlayerSheet.SETTINGS -> PlayerSettingsSheet(
             engine = state.engine,
             mpvAvailable = com.xplayer.app.player.engine.EngineAvailability.mpvAvailable,
+            mpvBlockedByUri = viewModel.sourceKind == "uri",
             aspectLabel = stringResource(viewModel.aspectMode.labelRes()),
             rotationMode = rotationMode,
             onSwitchEngine = { target ->
@@ -586,6 +592,10 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
             onRotate = { mode ->
                 rotationMode = mode
                 applyRotation(activity, mode)
+            },
+            onMediaInfo = {
+                sheet = null
+                onOpenMediaInfo()
             },
             onLock = {
                 sheet = null
@@ -865,6 +875,7 @@ private fun startBackgroundAudio(
     val source = viewModel.controller.currentSource() ?: return null
     val uri = when (source) {
         is LocalFileSource -> Uri.fromFile(File(source.path)).toString()
+        is ContentUriSource -> source.uri
         is NetworkUrlSource -> source.url
     }
     val intent = PlaybackService.startIntent(context, uri, source.displayName, positionMs)

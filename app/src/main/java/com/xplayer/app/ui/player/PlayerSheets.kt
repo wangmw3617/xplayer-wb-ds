@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import com.xplayer.app.player.engine.EngineType
@@ -463,6 +464,7 @@ fun fileLabel(path: String): String = File(path).name
 fun PlayerSettingsSheet(
     engine: EngineType,
     mpvAvailable: Boolean,
+    mpvBlockedByUri: Boolean = false,
     aspectLabel: String,
     rotationMode: Int,
     onSwitchEngine: (EngineType) -> Unit,
@@ -473,6 +475,7 @@ fun PlayerSettingsSheet(
     onPip: () -> Unit,
     onRotate: (Int) -> Unit,
     onLock: () -> Unit,
+    onMediaInfo: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -501,14 +504,14 @@ fun PlayerSettingsSheet(
             )
             PlayerEngineRow(
                 title = "libmpv",
-                subtitle = if (mpvAvailable) {
-                    stringResource(R.string.player_engine_mpv_desc)
-                } else {
-                    stringResource(R.string.player_engine_unavailable)
+                subtitle = when {
+                    !mpvAvailable -> stringResource(R.string.player_engine_unavailable)
+                    mpvBlockedByUri -> stringResource(R.string.player_engine_uri_media3_only)
+                    else -> stringResource(R.string.player_engine_mpv_desc)
                 },
                 icon = XPlayerIcons.Memory,
                 selected = engine == EngineType.MPV,
-                enabled = mpvAvailable,
+                enabled = mpvAvailable && !mpvBlockedByUri,
                 onClick = { onSwitchEngine(EngineType.MPV) },
             )
             Text(
@@ -529,6 +532,11 @@ fun PlayerSettingsSheet(
                 icon = XPlayerIcons.Subtitles,
                 title = stringResource(R.string.player_subtitle_style),
                 onClick = onSubtitleStyle,
+            )
+            PlayerSheetRow(
+                icon = Icons.Default.Info,
+                title = stringResource(R.string.action_media_info),
+                onClick = onMediaInfo,
             )
             PlayerSheetRow(
                 icon = XPlayerIcons.RotateScreen,
