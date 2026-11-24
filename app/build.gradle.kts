@@ -18,9 +18,13 @@ android {
         applicationId = "com.xplayer.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.1.0"
         vectorDrawables { useSupportLibrary = true }
+        ndk {
+            // 通用包：四个 ABI 全部打进同一个 APK（libmpv 与 Media3 FFmpeg 均提供这四套）
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
     }
 
     signingConfigs {
@@ -39,7 +43,7 @@ android {
             isMinifyEnabled = false
         }
         release {
-            // V1 阶段关闭混淆，避免 R8 误伤 libmpv / Media3 的反射调用；体积控制交由 ABI 分包完成
+            // V1 阶段关闭混淆，避免 R8 误伤 libmpv / Media3 的反射调用；体积控制交由资源压缩与原生库压缩完成
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -51,12 +55,10 @@ android {
         }
     }
 
+    // 不开 ABI 分包：只出一个通用包，任何设备（含模拟器 x86_64）都能直接装
     splits {
         abi {
-            isEnable = true
-            reset()
-            include("arm64-v8a")
-            isUniversalApk = false
+            isEnable = false
         }
     }
 

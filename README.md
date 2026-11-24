@@ -60,14 +60,14 @@ app/src/main/java/com/xplayer/app/
 
 仓库：<https://github.com/wangmw3617/xplayer-wb-ds>（私有）
 
-推送后由 `.github/workflows/android-ci.yml` 自动执行 `compileDebugKotlin lintDebug` → `assembleDebug`，产物以 `XPlayer-arm64-v8a-debug.apk` 上传（保留 14 天）；推送 `v*` 标签会额外签名打包并创建 GitHub Release。
+推送后由 `.github/workflows/android-ci.yml` 自动执行 `compileDebugKotlin lintDebug` → `assembleDebug`，产物以 `XPlayer-universal-debug.apk` 上传（保留 14 天）；推送 `v*` 标签会额外签名打包并创建 GitHub Release。
 
 每次推送产出两种包：
 
 | 包 | 触发 | 体积 | 签名 |
 | --- | --- | --- | --- |
-| `XPlayer-arm64-v8a-debug.apk` | 任意推送 / PR | ~43MB | debug |
-| `XPlayer-arm64-v8a-release.apk` | 推 `v*` 标签，或手动触发时勾选 `build_release` | ~36MB | 正式证书（`CN=XPlayer`），未配 Secrets 时回退 debug |
+| `XPlayer-universal-debug.apk` | 任意推送 / PR | ~106MB | debug |
+| `XPlayer-universal-release.apk` | 推 `v*` 标签，或手动触发时勾选 `build_release` | ~94MB | 正式证书（`CN=XPlayer`），未配 Secrets 时回退 debug |
 
 下载方式：
 
@@ -76,7 +76,7 @@ app/src/main/java/com/xplayer/app/
 gh release download v1.0.0 --repo wangmw3617/xplayer-wb-ds -D ./apk
 
 # 或取某次 CI 的 artifact
-gh run download -n XPlayer-arm64-v8a-release -D ./apk --repo wangmw3617/xplayer-wb-ds
+gh run download -n XPlayer-universal-release -D ./apk --repo wangmw3617/xplayer-wb-ds
 
 # 手动触发一次带 release 包的构建
 gh workflow run "Android CI" --repo wangmw3617/xplayer-wb-ds -f build_release=true
@@ -87,10 +87,10 @@ gh workflow run "Android CI" --repo wangmw3617/xplayer-wb-ds -f build_release=tr
 ```bash
 # local.properties 写入 sdk.dir=/path/to/Android/sdk
 ./gradlew :app:assembleDebug
-# 产物：app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+# 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
-默认仅构建 `arm64-v8a`；如需 32 位或通用包，在 `app/build.gradle.kts` 的 `splits.abi` 中追加。
+出的是单一通用包，`armeabi-v7a / arm64-v8a / x86 / x86_64` 四套原生库都在同一个 APK 里，任何真机与模拟器都能直接安装；`abiFilters` 在 `app/build.gradle.kts` 的 `defaultConfig` 中，`splits.abi` 保持关闭。
 
 ### 4.3 Release 签名（可选）
 
@@ -123,7 +123,8 @@ gh workflow run "Android CI" --repo wangmw3617/xplayer-wb-ds -f build_release=tr
 
 ## 7. 已知限制
 
-- APK 体积：release ~36MB / debug ~43MB（`arm64-v8a` 单架构，`.so` 与 dex 均压缩存放）。构成：原生库 49.1MB 原始 → 20MB（libmpv 15.6 + libavcodec 12.5 + libc++_shared 9.5 + libavfilter 4.4 + libavformat 3.4 …），dex 35MB 原始 → 12.6MB（未开 R8），mpv OSD 字体 `subfont.ttf` 6.4MB → 2.9MB。双内核意味着 FFmpeg 存在两份（libmpv 自带一套 + Media3 的 `libffmpegJNI.so`），这是体积的主要来源，也是功能必需。
+- APK 体积：release ~94MB / debug ~106MB（通用包，四套 ABI，`.so` 与 dex 均压缩存放）。构成：原生库 188.9MB 原始 → 77.4MB（arm64 46.8 / x86_64 53.0 / x86 49.0 / v7a 39.9，每套含 libmpv + libavcodec + libavfilter + libc++_shared + libffmpegJNI），dex 33.4MB 原始 → 12.0MB（未开 R8），mpv OSD 字体 `subfont.ttf` 6.4MB → 2.9MB。双内核意味着 FFmpeg 存在两份（libmpv 自带一套 + Media3 的 `libffmpegJNI.so`），四架构叠加是体积的主要来源。
+- 单架构出包（体积回到 ~36MB）只需把 `defaultConfig.ndk.abiFilters` 改为 `listOf("arm64-v8a")`，或打开 `splits.abi` 按 ABI 分包。
 - 进一步压缩的可选项：开启 R8 (`isMinifyEnabled = true`) 可再省约 6MB dex，但需为 libmpv JNI、Media3 renderer、Room 补 keep 规则并做真机回归，当前为稳定性优先未启用。
 - v1.0.0 用的是 debug 证书，从 v1.0.1 起换成了正式 keystore（签名指纹变化），**升级前需先卸载旧包**。
 - 着色器「组合预设位」（自定义保存番剧超分方案）尚未实现，目前支持单条启用/排序/总开关与 `mpv.conf` 预设片段。
