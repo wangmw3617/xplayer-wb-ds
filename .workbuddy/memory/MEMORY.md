@@ -1,8 +1,13 @@
 # XPlayer 项目长期约定
 
+## 版本号策略（重要）
+- **日常小修改（改 UI、修 bug、调文案等）一律不动 `versionCode` / `versionName`**，只提交推送；等用户明确说「发包」时才统一升版本。
+- 升版本规则：`versionCode` 递增 1，`versionName` 次版本加一（1.3.0 → 1.4.0）。
+- 即：一次版本号可能对应多个提交，不要每次改动都 bump。
+
 ## 发布（重要）
 - 用户说「发包」= 直接执行完整发布流程，不需要再确认：
-  1. 版本号 +1（`versionCode` 递增，`versionName` 次版本加一，如 1.2.0 → 1.3.0）
+  1. 此时才升版本号（见上）
   2. `git commit` + `git push origin main`
   3. `git tag vX.Y.Z && git push origin vX.Y.Z`
   4. `gh run watch <tag 运行 id>` 等 CI 绿，然后报告 Release 地址与各架构包体积
