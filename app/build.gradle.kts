@@ -18,8 +18,8 @@ android {
         applicationId = "com.xplayer.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -79,8 +79,13 @@ android {
             )
         }
         jniLibs {
-            // libmpv 体积较大，分包后仍需保证 .so 不被重复压缩
-            useLegacyPackaging = false
+            // 压缩存放 .so：APK 从 ~85MB 降到 ~57MB
+            // 代价是安装时解压一次，首次安装耗时与占用略增
+            useLegacyPackaging = true
+        }
+        dex {
+            // dex 默认不压缩（minSdk>=28 的快速启动优化），这里换回压缩换取体积
+            useLegacyPackaging = true
         }
     }
 

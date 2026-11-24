@@ -66,8 +66,8 @@ app/src/main/java/com/xplayer/app/
 
 | 包 | 触发 | 体积 | 签名 |
 | --- | --- | --- | --- |
-| `XPlayer-arm64-v8a-debug.apk` | 任意推送 / PR | ~96MB | debug |
-| `XPlayer-arm64-v8a-release.apk` | 推 `v*` 标签，或手动触发时勾选 `build_release` | ~85MB | 有 keystore 用正式证书，否则回退 debug |
+| `XPlayer-arm64-v8a-debug.apk` | 任意推送 / PR | ~43MB | debug |
+| `XPlayer-arm64-v8a-release.apk` | 推 `v*` 标签，或手动触发时勾选 `build_release` | ~36MB | 正式证书（`CN=XPlayer`），未配 Secrets 时回退 debug |
 
 下载方式：
 
@@ -123,6 +123,8 @@ gh workflow run "Android CI" --repo wangmw3617/xplayer-wb-ds -f build_release=tr
 
 ## 7. 已知限制
 
-- APK 体积：debug 约 96MB、release 约 85MB，其中 libmpv + FFmpeg 原生库 ~49MB（以未压缩方式存放，便于 mmap 直接加载）、`subfont.ttf` 6.4MB。PRD 期望的 35–45MB 可两条路达成：① `packaging.jniLibs.useLegacyPackaging = true`（原生库改压缩，安装时解压，零代码风险，预计降到 ~40MB）；② 开启 R8 + keep 规则（有 JNI 反射误伤风险，需真机回归）。当前为稳定性优先，均未启用。
+- APK 体积：release ~36MB / debug ~43MB（`arm64-v8a` 单架构，`.so` 与 dex 均压缩存放）。构成：原生库 49.1MB 原始 → 20MB（libmpv 15.6 + libavcodec 12.5 + libc++_shared 9.5 + libavfilter 4.4 + libavformat 3.4 …），dex 35MB 原始 → 12.6MB（未开 R8），mpv OSD 字体 `subfont.ttf` 6.4MB → 2.9MB。双内核意味着 FFmpeg 存在两份（libmpv 自带一套 + Media3 的 `libffmpegJNI.so`），这是体积的主要来源，也是功能必需。
+- 进一步压缩的可选项：开启 R8 (`isMinifyEnabled = true`) 可再省约 6MB dex，但需为 libmpv JNI、Media3 renderer、Room 补 keep 规则并做真机回归，当前为稳定性优先未启用。
+- v1.0.0 用的是 debug 证书，从 v1.0.1 起换成了正式 keystore（签名指纹变化），**升级前需先卸载旧包**。
 - 着色器「组合预设位」（自定义保存番剧超分方案）尚未实现，目前支持单条启用/排序/总开关与 `mpv.conf` 预设片段。
 - 未在真机验证 HDR/DV 点亮与 Anime4K 实际渲染效果，需按 PRD 里程碑做真机验收。
