@@ -14,6 +14,7 @@ import com.xplayer.app.data.source.MediaSource
 import com.xplayer.app.data.source.MediaUriResolver
 import com.xplayer.app.data.source.NetworkUrlSource
 import com.xplayer.app.data.source.SidecarSubtitle
+import com.xplayer.app.util.Formatters
 import java.io.File
 import java.util.Locale
 
@@ -75,6 +76,70 @@ private fun hdrRank(hdr: HdrType): Int = when (hdr) {
 }
 
 /**
+ * 播放页顶部那一行技术摘要，例如
+ * `MKV · HEVC · 1080P · 24fps · HDR10 · AAC 5.1 · 6.4 Mbps`；
+ * 纯音频文件退化成 `FLAC · 44.1 kHz · 1411 kbps`。
+ */
+fun MediaInfo.techSummary(): String {
+    val parts = mutableListOf<String>()
+    container?.takeIf { it.isNotBlank() }?.let { parts += it }
+    val video = videoTracks.maxByOrNull { (it.width ?: 0).toLong() * (it.height ?: 0) }
+    if (video != null) {
+        video.codec?.let { parts += it }
+        Formatters.resolutionLabel(video.width ?: 0, video.height ?: 0)
+            .takeIf { it.isNotEmpty() }
+            ?.let { parts += it }
+        video.frameRate?.takeIf { it >= 1f }?.let { fps ->
+            parts += if (fps % 1f == 0f) {
+                "${fps.toInt()}fps"
+            } else {
+                String.format(Locale.US, "%.2ffps", fps)
+            }
+        }
+        if (video.hdr != HdrType.NONE) parts += hdrShort(video.hdr)
+    }
+    val audio = audioTracks.firstOrNull()
+    if (audio != null) {
+        val audioLabel = buildString {
+            audio.codec?.let { append(it) }
+            audio.channels?.takeIf { it > 2 }?.let { channels ->
+                if (isNotEmpty()) append(' ')
+                append(channelLayout(channels))
+            }
+        }
+        if (audioLabel.isNotBlank()) parts += audioLabel
+        if (video == null) {
+            audio.sampleRate?.takeIf { it > 0 }?.let { parts += sampleRateShort(it) }
+        }
+    }
+    if (overallBitrate > 0) parts += bitrateShort(overallBitrate)
+    return parts.joinToString(" · ")
+}
+
+private fun hdrShort(hdr: HdrType): String = when (hdr) {
+    HdrType.NONE -> "SDR"
+    HdrType.HDR10 -> "HDR10"
+    HdrType.HDR10_PLUS -> "HDR10+"
+    HdrType.DOLBY_VISION -> "DV"
+    HdrType.HLG -> "HLG"
+}
+
+private fun channelLayout(channels: Int): String = when (channels) {
+    3 -> "2.1"
+    6 -> "5.1"
+    8 -> "7.1"
+    else -> "${channels}ch"
+}
+
+private fun sampleRateShort(rate: Int): String =
+    if (rate % 1000 == 0) "${rate / 1000} kHz" else String.format(Locale.US, "%.1f kHz", rate / 1000f)
+
+private fun bitrateShort(bitsPerSecond: Long): String = when {
+    bitsPerSecond >= 1_000_000 -> String.format(Locale.US, "%.1f Mbps", bitsPerSecond / 1_000_000.0)
+    else -> "${bitsPerSecond / 1000} kbps"
+}
+
+/**
  * 媒体信息分析：用 MediaExtractor 逐轨读取真实参数（不是从文件名猜），
  * 支持本地文件与外部 content:// 来源，纯音频文件同样适用。
  */
@@ -91,7 +156,11 @@ object MediaInfoProbe {
             source is ContentUriSource -> MediaUriResolver.sizeOf(context, Uri.parse(source.uri))
             else -> -1L
         }
-        val modified = file?.lastModified() ?: 0L
+        val modified = file?.lastModified()
+            ?: (source as? ContentUriSource)?.let {
+                MediaUriResolver.modifiedOf(context, Uri.parse(it.uri))
+            }
+            ?: 0L
         val sidecars = when (source) {
             is LocalFileSource -> source.subtitles.ifEmpty { SubtitleFinder.find(source.path) }
             else -> emptyList()
@@ -142,52 +211,63 @@ object MediaInfoProbe {
 
     private class ExtractHandle(
         val extractor: MediaExtractor,
-        private val descriptor: android.content.res.AssetFileDescriptor?,
+        private val resource: java.io.Closeable?,
     ) : java.io.Closeable {
         override fun close() {
             runCatching { extractor.release() }
-            runCatching { descriptor?.close() }
+            runCatching { resource?.close() }
         }
     }
 
-    /**
-     * content:// 的 AssetFileDescriptor 有时长度未知（length < 0），
-     * 这时退回整 fd 读取，否则 MediaExtractor 会直接报错。
-     */
     private fun openHandle(context: Context, source: MediaSource): ExtractHandle? = when (source) {
         is LocalFileSource -> runCatching {
             ExtractHandle(MediaExtractor().apply { setDataSource(source.path) }, null)
         }.getOrNull()
 
-        is ContentUriSource -> {
-            val descriptor = runCatching {
-                context.contentResolver.openAssetFileDescriptor(Uri.parse(source.uri), "r")
-            }.getOrNull()
-            if (descriptor == null) {
-                null
-            } else {
-                val extractor = runCatching {
-                    MediaExtractor().apply {
-                        if (descriptor.length >= 0) {
-                            setDataSource(descriptor.fileDescriptor, descriptor.startOffset, descriptor.length)
-                        } else {
-                            setDataSource(descriptor.fileDescriptor)
-                        }
-                    }
-                }.recoverCatching {
-                    MediaExtractor().apply { setDataSource(descriptor.fileDescriptor) }
-                }.getOrNull()
-                if (extractor == null) {
-                    runCatching { descriptor.close() }
-                    null
-                } else {
-                    ExtractHandle(extractor, descriptor)
-                }
-            }
-        }
+        is ContentUriSource -> openUriHandle(context, Uri.parse(source.uri))
 
         // 网络流的轨道参数必须拉流才知道，这里只给基础信息，避免信息页卡住
         is NetworkUrlSource -> null
+    }
+
+    /**
+     * 外部「打开方式」传来的 content:// 由各家 provider 实现，兼容性差异很大，
+     * 依次尝试三条路：ContentResolver 直接打开 → AssetFileDescriptor（带 offset/length）
+     * → 裸 fd（长度未知的网盘 provider）。全失败才判定读不到参数。
+     */
+    private fun openUriHandle(context: Context, uri: Uri): ExtractHandle? {
+        runCatching {
+            MediaExtractor().apply { setDataSource(context, uri, null) }
+        }.getOrNull()?.let { return ExtractHandle(it, null) }
+
+        val descriptor = runCatching {
+            context.contentResolver.openAssetFileDescriptor(uri, "r")
+        }.getOrNull()
+        if (descriptor != null) {
+            val extractor = runCatching {
+                MediaExtractor().apply {
+                    if (descriptor.length >= 0) {
+                        setDataSource(descriptor.fileDescriptor, descriptor.startOffset, descriptor.length)
+                    } else {
+                        setDataSource(descriptor.fileDescriptor)
+                    }
+                }
+            }.recoverCatching {
+                MediaExtractor().apply { setDataSource(descriptor.fileDescriptor) }
+            }.getOrNull()
+            if (extractor != null) return ExtractHandle(extractor, descriptor)
+            runCatching { descriptor.close() }
+        }
+
+        val pfd = runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
+        if (pfd != null) {
+            val extractor = runCatching {
+                MediaExtractor().apply { setDataSource(pfd.fileDescriptor) }
+            }.getOrNull()
+            if (extractor != null) return ExtractHandle(extractor, pfd)
+            runCatching { pfd.close() }
+        }
+        return null
     }
 
     private fun readTrack(

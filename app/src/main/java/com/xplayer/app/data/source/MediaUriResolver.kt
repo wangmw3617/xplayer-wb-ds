@@ -95,6 +95,29 @@ object MediaUriResolver {
     }
 
     /**
+     * content:// 的修改时间。MediaStore 系给的是秒，DocumentsProvider 给的是毫秒，
+     * 这里按数值大小判断单位，取不到就是 0（信息页隐藏该行）。
+     */
+    fun modifiedOf(context: Context, uri: Uri): Long {
+        fun read(column: String): Long = runCatching {
+            context.contentResolver.query(uri, arrayOf(column), null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(column)
+                if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
+                    cursor.getLong(index)
+                } else {
+                    0L
+                }
+            }
+        }.getOrNull() ?: 0L
+
+        val seconds = read(MediaStore.MediaColumns.DATE_MODIFIED)
+        if (seconds > 0) return seconds * 1000L
+        val millis = read("last_modified")
+        if (millis > 0) return if (millis < 100_000_000_000L) millis * 1000L else millis
+        return 0L
+    }
+
+    /**
      * content:// → 真实路径。只覆盖最常见的三类来源，
      * 失败返回 null，由调用方退化成 ContentUriSource。
      */
