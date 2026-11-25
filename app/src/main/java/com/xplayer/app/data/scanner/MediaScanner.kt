@@ -8,6 +8,7 @@ import com.xplayer.app.data.datastore.SettingsRepository
 import com.xplayer.app.data.repository.FolderRepository
 import com.xplayer.app.data.repository.VideoRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,8 +41,14 @@ class MediaScanner(
     private val _state = MutableStateFlow(ScanState())
     val state: StateFlow<ScanState> = _state.asStateFlow()
 
+    private val playbackActive = MutableStateFlow(false)
     private val mutex = Mutex()
     private val extractor = MetadataExtractor(File(context.cacheDir, "thumbs"))
+
+    /** 播放本地视频期间暂停扫描中的硬解抽帧，避免与播放器抢占 MediaCodec 槽位和磁盘 I/O */
+    fun setPlaybackActive(active: Boolean) {
+        playbackActive.value = active
+    }
 
     suspend fun scan(): ScanState = mutex.withLock {
         if (_state.value.scanning) return@withLock _state.value
@@ -59,6 +66,9 @@ class MediaScanner(
             val pending = ArrayList<VideoEntity>(32)
             val seen = HashSet<String>(candidates.size)
             candidates.forEachIndexed { index, file ->
+                while (playbackActive.value) {
+                    delay(300L)
+                }
                 val path = runCatching { file.canonicalPath }.getOrDefault(file.absolutePath)
                 seen += path
                 val old = existing[path]

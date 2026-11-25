@@ -29,12 +29,24 @@ class SettingsRepository(private val context: Context) {
         update { it.copy(gesture = GesturePrefs()) }
     }
 
-    private fun Preferences.toSettings(): AppSettings = AppSettings(
-        appearance = AppearancePrefs(
-            dynamicColor = this[Keys.DYNAMIC_COLOR] ?: true,
-            seed = enumOf(this[Keys.SEED], ColorSeed.OCEAN),
-            themeMode = enumOf(this[Keys.THEME_MODE], ThemeMode.SYSTEM),
-        ),
+    private fun Preferences.toSettings(): AppSettings {
+        val rawTheme = this[Keys.THEME_MODE]
+        val legacyAmoled = rawTheme == "AMOLED"
+        val resolvedTheme = if (legacyAmoled) ThemeMode.DARK else enumOf(rawTheme, ThemeMode.SYSTEM)
+        val resolvedDarkSurface = if (legacyAmoled && this[Keys.DARK_SURFACE_MODE] == null) {
+            DarkSurfaceMode.PURE_BLACK
+        } else {
+            enumOf(this[Keys.DARK_SURFACE_MODE], DarkSurfaceMode.STANDARD)
+        }
+        return AppSettings(
+            appearance = AppearancePrefs(
+                dynamicColor = this[Keys.DYNAMIC_COLOR] ?: false,
+                seed = enumOf(this[Keys.SEED], ColorSeed.OCEAN),
+                themeMode = resolvedTheme,
+                darkSurfaceMode = resolvedDarkSurface,
+                bottomBarStyle = enumOf(this[Keys.BOTTOM_BAR_STYLE], BottomBarStyle.LIQUID_GLASS),
+                animationLevel = enumOf(this[Keys.ANIMATION_LEVEL], AnimationLevel.STANDARD),
+            ),
         engine = EnginePrefs(
             policy = enumOf(this[Keys.ENGINE_POLICY], EnginePolicy.MEDIA3_FIRST),
             assAutoSwitch = this[Keys.ASS_AUTO_SWITCH] ?: true,
@@ -83,12 +95,16 @@ class SettingsRepository(private val context: Context) {
         media = MediaPrefs(
             autoScanOnLaunch = this[Keys.AUTO_SCAN] ?: true,
         ),
-    )
+        )
+    }
 
     private fun androidx.datastore.preferences.core.MutablePreferences.writeAll(settings: AppSettings) {
         this[Keys.DYNAMIC_COLOR] = settings.appearance.dynamicColor
         this[Keys.SEED] = settings.appearance.seed.name
         this[Keys.THEME_MODE] = settings.appearance.themeMode.name
+        this[Keys.DARK_SURFACE_MODE] = settings.appearance.darkSurfaceMode.name
+        this[Keys.BOTTOM_BAR_STYLE] = settings.appearance.bottomBarStyle.name
+        this[Keys.ANIMATION_LEVEL] = settings.appearance.animationLevel.name
 
         this[Keys.ENGINE_POLICY] = settings.engine.policy.name
         this[Keys.ASS_AUTO_SWITCH] = settings.engine.assAutoSwitch
@@ -141,6 +157,9 @@ class SettingsRepository(private val context: Context) {
         val DYNAMIC_COLOR = booleanPreferencesKey("appearance.dynamic_color")
         val SEED = stringPreferencesKey("appearance.seed")
         val THEME_MODE = stringPreferencesKey("appearance.theme_mode")
+        val DARK_SURFACE_MODE = stringPreferencesKey("appearance.dark_surface_mode")
+        val BOTTOM_BAR_STYLE = stringPreferencesKey("appearance.bottom_bar_style")
+        val ANIMATION_LEVEL = stringPreferencesKey("appearance.animation_level")
 
         val ENGINE_POLICY = stringPreferencesKey("engine.policy")
         val ASS_AUTO_SWITCH = booleanPreferencesKey("engine.ass_auto_switch")

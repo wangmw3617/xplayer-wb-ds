@@ -16,10 +16,12 @@ import `is`.xyz.mpv.BaseMPVView
 import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
 import java.io.File
+import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,9 +48,16 @@ class MpvEngineImpl(
     )
     override val state = _state.asStateFlow()
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // 单线程执行器串行化全部 mpv JNI 调用，避免主线程 ANR 及 release() 期间并发访问崩溃/死锁
+    private val mpvExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "xplayer-mpv").apply { isDaemon = true }
+    }
+    private val mpvDispatcher = mpvExecutor.asCoroutineDispatcher()
+    private val scope = CoroutineScope(SupervisorJob() + mpvDispatcher)
     private var pollJob: Job? = null
 
+    @Volatile
+    private var released = false
     private var videoView: BaseMPVView? = null
     private var mpv: MPV? = null
     private var initialized = false
@@ -63,6 +72,7 @@ class MpvEngineImpl(
     }
 
     override fun prepare(source: MediaSource, startPositionMs: Long, subtitleStyle: SubtitlePrefs, speed: Float) {
+        if (released) return
         val view = videoView ?: run {
             _state.value = _state.value.copy(error = "MPV_VIEW_MISSING")
             return
@@ -94,10 +104,12 @@ class MpvEngineImpl(
                 is ContentUriSource -> source.uri
                 is NetworkUrlSource -> source.url
             }
-            view.playFile(target)
             if (startPositionMs > 0) {
-                mpv?.command("seek", (startPositionMs / 1000.0).toString(), "absolute+exact")
+                mpv?.setOptionString("start", "+${startPositionMs / 1000.0}")
+            } else {
+                mpv?.setOptionString("start", "none")
             }
+            view.playFile(target)
             mpv?.setPropertyBoolean("pause", false)
             _state.value = _state.value.copy(
                 ready = false,
@@ -159,93 +171,95 @@ class MpvEngineImpl(
     }
 
     override fun play() {
-        runCatching { mpv?.setPropertyBoolean("pause", false) }
         _state.value = _state.value.copy(isPlaying = true)
+        launchMpv { mpv?.setPropertyBoolean("pause", false) }
     }
 
     override fun pause() {
-        runCatching { mpv?.setPropertyBoolean("pause", true) }
         _state.value = _state.value.copy(isPlaying = false)
+        launchMpv { mpv?.setPropertyBoolean("pause", true) }
     }
 
     override fun seekTo(positionMs: Long) {
-        runCatching { mpv?.command("seek", (positionMs / 1000.0).toString(), "absolute+exact") }
         _state.value = _state.value.copy(positionMs = positionMs, ended = false)
+        launchMpv { mpv?.command("seek", (positionMs / 1000.0).toString(), "absolute+exact") }
     }
 
     override fun setSpeed(speed: Float) {
-        runCatching { mpv?.setPropertyDouble("speed", speed.toDouble()) }
         _state.value = _state.value.copy(speed = speed)
+        launchMpv { mpv?.setPropertyDouble("speed", speed.toDouble()) }
     }
 
     override fun selectAudioTrack(track: TrackInfo) {
-        runCatching { mpv?.setPropertyString("aid", track.id) }
         _state.value = _state.value.copy(selectedAudioId = track.id)
+        launchMpv { mpv?.setPropertyString("aid", track.id) }
     }
 
     override fun selectSubtitleTrack(track: TrackInfo?) {
-        runCatching { mpv?.setPropertyString("sid", track?.id ?: "no") }
         _state.value = _state.value.copy(selectedSubtitleId = track?.id)
+        launchMpv { mpv?.setPropertyString("sid", track?.id ?: "no") }
     }
 
     override fun addExternalSubtitle(subtitle: SidecarSubtitle) {
-        runCatching {
-            mpv?.command("sub-add", subtitle.path, "select", subtitle.name)
-        }.onFailure { Log.w(TAG, "sub-add failed: ${it.message}") }
         _state.value = _state.value.copy(subtitleDelayMs = _state.value.subtitleDelayMs)
+        launchMpv {
+            runCatching {
+                mpv?.command("sub-add", subtitle.path, "select", subtitle.name)
+            }.onFailure { Log.w(TAG, "sub-add failed: ${it.message}") }
+        }
     }
 
     override fun setSubtitleDelay(delayMs: Long) {
-        runCatching { mpv?.setPropertyDouble("sub-delay", delayMs / 1000.0) }
         _state.value = _state.value.copy(subtitleDelayMs = delayMs)
+        launchMpv { mpv?.setPropertyDouble("sub-delay", delayMs / 1000.0) }
     }
 
     override fun applySubtitleStyle(style: SubtitlePrefs) {
         subtitleStyle = style
-        val mpv = mpv ?: return
-        val scale = style.fontScalePercent / 100f
-        val alpha = ((style.colorArgb ushr 24) and 0xFF).toInt()
-        val rgb = (style.colorArgb and 0xFFFFFF).toInt()
-        val color = String.format("#%02X%02X%02X", (rgb ushr 16) and 0xFF, (rgb ushr 8) and 0xFF, rgb and 0xFF)
-        runCatching {
-            mpv.setPropertyString("sub-font-size", (52 * scale).toInt().toString())
-            mpv.setPropertyString("sub-color", color)
-            mpv.setPropertyString("sub-border-size", (2.4f * style.outlinePercent / 100f).toString())
-            mpv.setPropertyString("sub-shadow-offset", if (style.shadow) "1.6" else "0")
-            mpv.setPropertyString("sub-back-color", if (style.backgroundBar) "#A0000000" else "#00000000")
-            mpv.setPropertyString("sub-margin-y", style.bottomMarginDp.toString())
-            mpv.setPropertyString("sub-ass-override", if (style.forceAssOverride) "force" else "scale")
-            mpv.setPropertyBoolean("sub-ass-vsfilter-blur-compat", alpha > 0)
-        }.onFailure { Log.w(TAG, "applySubtitleStyle: ${it.message}") }
+        launchMpv {
+            val instance = mpv ?: return@launchMpv
+            val scale = style.fontScalePercent / 100f
+            val alpha = ((style.colorArgb ushr 24) and 0xFF).toInt()
+            val rgb = (style.colorArgb and 0xFFFFFF).toInt()
+            val color = String.format("#%02X%02X%02X", (rgb ushr 16) and 0xFF, (rgb ushr 8) and 0xFF, rgb and 0xFF)
+            instance.setPropertyString("sub-font-size", (52 * scale).toInt().toString())
+            instance.setPropertyString("sub-color", color)
+            instance.setPropertyString("sub-border-size", (2.4f * style.outlinePercent / 100f).toString())
+            instance.setPropertyString("sub-shadow-offset", if (style.shadow) "1.6" else "0")
+            instance.setPropertyString("sub-back-color", if (style.backgroundBar) "#A0000000" else "#00000000")
+            instance.setPropertyString("sub-margin-y", style.bottomMarginDp.toString())
+            instance.setPropertyString("sub-ass-override", if (style.forceAssOverride) "force" else "scale")
+            instance.setPropertyBoolean("sub-ass-vsfilter-blur-compat", alpha > 0)
+        }
     }
 
     override fun setAspectRatio(mode: AspectMode) {
-        val mpv = mpv ?: return
-        runCatching {
+        launchMpv {
+            val instance = mpv ?: return@launchMpv
             when (mode) {
                 AspectMode.FIT -> {
-                    mpv.setPropertyString("video-aspect-override", "no")
-                    mpv.setPropertyBoolean("keepaspect", true)
-                    mpv.setPropertyDouble("panscan", 0.0)
+                    instance.setPropertyString("video-aspect-override", "no")
+                    instance.setPropertyBoolean("keepaspect", true)
+                    instance.setPropertyDouble("panscan", 0.0)
                 }
                 AspectMode.CROP -> {
-                    mpv.setPropertyBoolean("keepaspect", true)
-                    mpv.setPropertyDouble("panscan", 1.0)
+                    instance.setPropertyBoolean("keepaspect", true)
+                    instance.setPropertyDouble("panscan", 1.0)
                 }
                 AspectMode.STRETCH -> {
-                    mpv.setPropertyBoolean("keepaspect", false)
-                    mpv.setPropertyDouble("panscan", 0.0)
+                    instance.setPropertyBoolean("keepaspect", false)
+                    instance.setPropertyDouble("panscan", 0.0)
                 }
-                AspectMode.RATIO_16_9 -> mpv.setPropertyString("video-aspect-override", "16:9")
-                AspectMode.RATIO_4_3 -> mpv.setPropertyString("video-aspect-override", "4:3")
+                AspectMode.RATIO_16_9 -> instance.setPropertyString("video-aspect-override", "16:9")
+                AspectMode.RATIO_4_3 -> instance.setPropertyString("video-aspect-override", "4:3")
                 AspectMode.ORIGINAL -> {
-                    mpv.setPropertyString("video-aspect-override", "no")
-                    mpv.setPropertyBoolean("keepaspect", true)
-                    mpv.setPropertyDouble("panscan", 0.0)
-                    mpv.setPropertyDouble("video-zoom", 0.0)
+                    instance.setPropertyString("video-aspect-override", "no")
+                    instance.setPropertyBoolean("keepaspect", true)
+                    instance.setPropertyDouble("panscan", 0.0)
+                    instance.setPropertyDouble("video-zoom", 0.0)
                 }
             }
-        }.onFailure { Log.w(TAG, "setAspectRatio: ${it.message}") }
+        }
     }
 
     override fun setPreciseSeek(enabled: Boolean) {
@@ -253,21 +267,41 @@ class MpvEngineImpl(
     }
 
     override fun setVolume(volume: Float) {
-        runCatching { mpv?.setPropertyDouble("volume", (volume * 100f).coerceIn(0f, 200f).toDouble()) }
+        launchMpv { mpv?.setPropertyDouble("volume", (volume * 100f).coerceIn(0f, 200f).toDouble()) }
     }
 
-    override suspend fun captureFrame(): Bitmap? = withContext(Dispatchers.IO) {
-        runCatching { mpv?.grabThumbnail(0) }.getOrNull()
+    override suspend fun captureFrame(): Bitmap? = withContext(mpvDispatcher) {
+        if (released) null else runCatching { mpv?.grabThumbnail(0) }.getOrNull()
     }
 
     override fun release() {
+        if (released) return
+        released = true
+        val viewToDestroy = videoView
+        videoView = null
         pollJob?.cancel()
         pollJob = null
-        runCatching { videoView?.destroy() }
-        videoView = null
-        mpv = null
-        initialized = false
-        scope.cancel()
+        // 待单线程执行器上正在进行的轮询/命令自然完成后再在主线程销毁 BaseMPVView，防止 libmpv 并发死锁
+        CoroutineScope(Dispatchers.Main.immediate).launch {
+            runCatching {
+                withContext(mpvDispatcher) {
+                    mpv = null
+                    initialized = false
+                }
+            }
+            runCatching { viewToDestroy?.destroy() }
+            scope.cancel()
+            runCatching { mpvExecutor.shutdownNow() }
+        }
+    }
+
+    private fun launchMpv(block: () -> Unit) {
+        if (released) return
+        scope.launch {
+            if (!released) {
+                runCatching(block).onFailure { Log.w(TAG, "mpv op: ${it.message}") }
+            }
+        }
     }
 
     private fun startPolling() {

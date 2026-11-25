@@ -8,11 +8,19 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,7 +40,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.xplayer.app.data.datastore.AnimationLevel
 import com.xplayer.app.data.datastore.AppSettings
+import com.xplayer.app.data.datastore.BottomBarStyle
 import com.xplayer.app.data.local.PlaybackHistoryEntity
 import com.xplayer.app.data.local.SourceType
 import com.xplayer.app.data.local.VideoEntity
@@ -41,6 +51,9 @@ import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.MediaUriResolver
 import com.xplayer.app.data.source.NetworkUrlSource
 import com.xplayer.app.ui.common.rememberAppVM
+import com.xplayer.app.ui.components.LocalAppBackdropState
+import com.xplayer.app.ui.components.frostedBackdropSource
+import com.xplayer.app.ui.components.rememberFrostedBackdropState
 import com.xplayer.app.ui.folders.FoldersScreen
 import com.xplayer.app.ui.home.HomeScreen
 import com.xplayer.app.ui.media.MediaInfoScreen
@@ -51,7 +64,9 @@ import com.xplayer.app.ui.player.PlayerActivityBridge
 import com.xplayer.app.ui.player.PlayerScreen
 import com.xplayer.app.ui.player.PlayerViewModel
 import com.xplayer.app.ui.settings.AboutScreen
+import com.xplayer.app.ui.settings.AppearanceSettingsScreen
 import com.xplayer.app.ui.settings.CodecScreen
+import com.xplayer.app.ui.settings.EngineSettingsScreen
 import com.xplayer.app.ui.settings.GestureSettingsScreen
 import com.xplayer.app.ui.settings.HiddenFoldersScreen
 import com.xplayer.app.ui.settings.MpvLabScreen
@@ -104,6 +119,8 @@ class MainActivity : ComponentActivity() {
                 ) {
                     XPlayerNavHost(
                         autoScanOnLaunch = settings.media.autoScanOnLaunch,
+                        bottomBarStyle = settings.appearance.bottomBarStyle,
+                        animationLevel = settings.appearance.animationLevel,
                         externalMediaUri = externalMediaUri,
                         onExternalMediaConsumed = { externalMediaUri.value = null },
                     )
@@ -152,6 +169,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun XPlayerNavHost(
     autoScanOnLaunch: Boolean,
+    bottomBarStyle: BottomBarStyle,
+    animationLevel: AnimationLevel,
     externalMediaUri: StateFlow<Uri?>,
     onExternalMediaConsumed: () -> Unit,
 ) {
@@ -160,6 +179,7 @@ private fun XPlayerNavHost(
     val currentRoute = backStackEntry?.destination?.route
     val context = LocalContext.current
     val container = (context.applicationContext as XPlayerApp).container
+    val appBackdropState = rememberFrostedBackdropState()
 
     val permission = rememberStoragePermission()
     var autoScanned by rememberSaveable { mutableStateOf(false) }
@@ -172,7 +192,18 @@ private fun XPlayerNavHost(
         }
     }
 
-    fun openPlayer(sourceType: String, key: String, title: String, startMs: Long, ass: Boolean) {
+    fun openPlayer(
+        sourceType: String,
+        key: String,
+        title: String,
+        startMs: Long,
+        ass: Boolean,
+        allowReplace: Boolean = false,
+    ) {
+        // 防止快速连点本地视频时连续压入多个播放页并发初始化解码器导致卡死
+        if (!allowReplace && navController.currentDestination?.route?.startsWith("player") == true) {
+            return
+        }
         navController.navigate(Routes.player(sourceType, key, title, startMs, ass))
     }
 
@@ -193,19 +224,54 @@ private fun XPlayerNavHost(
                 if (!navController.popBackStack()) break
             }
             when (source) {
-                is LocalFileSource -> openPlayer("local", source.path, source.displayName, 0L, false)
-                is ContentUriSource -> openPlayer("uri", source.uri, source.displayName, 0L, false)
-                is NetworkUrlSource -> openPlayer("network", source.url, source.displayName, 0L, false)
+                is LocalFileSource -> openPlayer("local", source.path, source.displayName, 0L, false, allowReplace = true)
+                is ContentUriSource -> openPlayer("uri", source.uri, source.displayName, 0L, false, allowReplace = true)
+                is NetworkUrlSource -> openPlayer("network", source.url, source.displayName, 0L, false, allowReplace = true)
             }
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        NavHost(
-            navController = navController,
-            startDestination = Routes.HOME,
-            modifier = Modifier.fillMaxSize(),
-        ) {
+    CompositionLocalProvider(LocalAppBackdropState provides appBackdropState) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .frostedBackdropSource(appBackdropState)
+                    .background(MaterialTheme.colorScheme.background),
+            ) {
+                NavHost(
+                    navController = navController,
+                    startDestination = Routes.HOME,
+                    modifier = Modifier.fillMaxSize(),
+                    enterTransition = {
+                        when (animationLevel) {
+                            AnimationLevel.STANDARD -> slideInHorizontally(tween(260)) { it / 8 } + fadeIn(tween(220))
+                            AnimationLevel.SNAPPY -> fadeIn(tween(130))
+                            AnimationLevel.OFF -> EnterTransition.None
+                        }
+                    },
+                    exitTransition = {
+                        when (animationLevel) {
+                            AnimationLevel.STANDARD -> fadeOut(tween(180))
+                            AnimationLevel.SNAPPY -> fadeOut(tween(100))
+                            AnimationLevel.OFF -> ExitTransition.None
+                        }
+                    },
+                    popEnterTransition = {
+                        when (animationLevel) {
+                            AnimationLevel.STANDARD -> fadeIn(tween(220))
+                            AnimationLevel.SNAPPY -> fadeIn(tween(120))
+                            AnimationLevel.OFF -> EnterTransition.None
+                        }
+                    },
+                    popExitTransition = {
+                        when (animationLevel) {
+                            AnimationLevel.STANDARD -> slideOutHorizontally(tween(240)) { it / 8 } + fadeOut(tween(200))
+                            AnimationLevel.SNAPPY -> fadeOut(tween(110))
+                            AnimationLevel.OFF -> ExitTransition.None
+                        }
+                    },
+                ) {
             composable(Routes.HOME) {
                 HomeScreen(
                     onPlayVideo = { video: VideoEntity, start: Long ->
@@ -256,6 +322,20 @@ private fun XPlayerNavHost(
                     onNavigate = { route -> navController.navigate(route) },
                     permissionGranted = permission.granted,
                     onRequestPermission = permission.request,
+                )
+            }
+
+            composable(Routes.APPEARANCE) {
+                val vm = rememberAppVM { SettingsViewModel(it) }
+                AppearanceSettingsScreen(onBack = { navController.popBackStack() }, viewModel = vm)
+            }
+
+            composable(Routes.ENGINE) {
+                val vm = rememberAppVM { SettingsViewModel(it) }
+                EngineSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenCodec = { navController.navigate(Routes.CODEC) },
+                    viewModel = vm,
                 )
             }
 
@@ -343,10 +423,12 @@ private fun XPlayerNavHost(
                 )
             }
         }
+        }
 
         if (currentRoute in Routes.mainTabs) {
             XPlayerBottomBar(
                 currentRoute = currentRoute,
+                style = bottomBarStyle,
                 onSelect = { target ->
                     if (target != currentRoute) {
                         navController.navigate(target) {
@@ -359,5 +441,6 @@ private fun XPlayerNavHost(
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
+    }
     }
 }

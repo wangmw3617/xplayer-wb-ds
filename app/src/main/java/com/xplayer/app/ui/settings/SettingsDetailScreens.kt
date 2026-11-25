@@ -1,6 +1,8 @@
 package com.xplayer.app.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
@@ -41,29 +44,42 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.xplayer.app.R
+import com.xplayer.app.data.datastore.AnimationLevel
 import com.xplayer.app.data.datastore.BackgroundBehavior
+import com.xplayer.app.data.datastore.BottomBarStyle
+import com.xplayer.app.data.datastore.ColorSeed
+import com.xplayer.app.data.datastore.DarkSurfaceMode
 import com.xplayer.app.data.datastore.EdgeDeadZone
+import com.xplayer.app.data.datastore.EnginePolicy
 import com.xplayer.app.data.datastore.GestureAction
+import com.xplayer.app.data.datastore.MpvHwDecoder
 import com.xplayer.app.data.datastore.SeekSpan
 import com.xplayer.app.data.datastore.SingleTapAction
+import com.xplayer.app.data.datastore.ThemeMode
 import com.xplayer.app.data.datastore.VerticalGestureAction
 import com.xplayer.app.data.datastore.ZoomMode
 import com.xplayer.app.data.datastore.labelRes
+import com.xplayer.app.data.datastore.summaryRes
 import com.xplayer.app.ui.components.ChevronTrailing
 import com.xplayer.app.ui.components.FrostedGlassSurface
 import com.xplayer.app.ui.components.FrostedHeaderScrim
+import com.xplayer.app.ui.components.InlinePickerRow
 import com.xplayer.app.ui.components.PickerSettingRow
 import com.xplayer.app.ui.components.SettingGroup
 import com.xplayer.app.ui.components.SettingRow
 import com.xplayer.app.ui.components.SettingSwitchRow
 import com.xplayer.app.ui.components.SheetOption
 import com.xplayer.app.ui.components.SliderSettingRow
+import com.xplayer.app.ui.components.StandaloneSwitchCard
 import com.xplayer.app.ui.components.frostedBackdropSource
 import com.xplayer.app.ui.components.rememberFrostedBackdropState
 import com.xplayer.app.ui.icons.XPlayerIcons
@@ -74,6 +90,9 @@ fun SettingsPageScaffold(
     title: String,
     onBack: () -> Unit,
     snackbar: SnackbarHostState? = null,
+    actionIcon: ImageVector? = null,
+    actionDescription: String? = null,
+    onAction: (() -> Unit)? = null,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -131,6 +150,22 @@ fun SettingsPageScaffold(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
+                    if (actionIcon != null && onAction != null) {
+                        Spacer(Modifier.width(12.dp))
+                        FrostedGlassSurface(
+                            backdropState = backdropState,
+                            shape = CircleShape,
+                            onClick = onAction,
+                            modifier = Modifier.size(42.dp),
+                        ) {
+                            Icon(
+                                imageVector = actionIcon,
+                                contentDescription = actionDescription,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(14.dp))
             }
@@ -144,6 +179,285 @@ fun SettingsPageScaffold(
                     .navigationBarsPadding()
                     .padding(bottom = 16.dp),
             )
+        }
+    }
+}
+
+@Composable
+fun AppearanceSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
+    val settings by viewModel.settings.collectAsState()
+    val appearance = settings.appearance
+
+    SettingsPageScaffold(
+        title = stringResource(R.string.settings_group_appearance),
+        onBack = onBack,
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(top = padding.calculateTopPadding() + 4.dp, bottom = 40.dp),
+        ) {
+            item {
+                StandaloneSwitchCard(
+                    title = stringResource(R.string.settings_dynamic_color),
+                    subtitle = stringResource(
+                        if (appearance.dynamicColor) {
+                            R.string.settings_dynamic_color_on
+                        } else {
+                            R.string.settings_dynamic_color_off
+                        },
+                    ),
+                    icon = XPlayerIcons.Storage,
+                    checked = appearance.dynamicColor,
+                    onCheckedChange = { enabled ->
+                        viewModel.update {
+                            it.copy(appearance = it.appearance.copy(dynamicColor = enabled))
+                        }
+                    },
+                )
+            }
+
+            item {
+                SettingGroup(title = stringResource(R.string.settings_dark)) {
+                    InlinePickerRow(
+                        title = stringResource(R.string.settings_dark),
+                        selectedLabel = stringResource(appearance.themeMode.labelRes()),
+                        icon = XPlayerIcons.Brightness,
+                        options = ThemeMode.entries.map {
+                            SheetOption(stringResource(it.labelRes()), it)
+                        },
+                        selected = appearance.themeMode,
+                        onSelect = { mode ->
+                            viewModel.update {
+                                it.copy(appearance = it.appearance.copy(themeMode = mode))
+                            }
+                        },
+                    )
+                    InlinePickerRow(
+                        title = stringResource(R.string.settings_dark_surface),
+                        selectedLabel = stringResource(appearance.darkSurfaceMode.labelRes()),
+                        icon = XPlayerIcons.Palette,
+                        options = DarkSurfaceMode.entries.map {
+                            SheetOption(stringResource(it.labelRes()), it)
+                        },
+                        selected = appearance.darkSurfaceMode,
+                        showDivider = false,
+                        onSelect = { darkMode ->
+                            viewModel.update {
+                                it.copy(appearance = it.appearance.copy(darkSurfaceMode = darkMode))
+                            }
+                        },
+                    )
+                }
+            }
+
+            item {
+                SettingGroup(title = stringResource(R.string.settings_group_color)) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                        ColorSeed.entries.chunked(5).forEachIndexed { rowIdx, rowSeeds ->
+                            if (rowIdx > 0) Spacer(Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                rowSeeds.forEach { seed ->
+                                    val selected = !appearance.dynamicColor && appearance.seed == seed
+                                    ColorSeedSwatch(
+                                        seed = seed,
+                                        selected = selected,
+                                        onClick = {
+                                            viewModel.update {
+                                                it.copy(
+                                                    appearance = it.appearance.copy(
+                                                        seed = seed,
+                                                        dynamicColor = false,
+                                                    ),
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                repeat(5 - rowSeeds.size) {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                SettingGroup(title = stringResource(R.string.settings_group_bar_anim)) {
+                    InlinePickerRow(
+                        title = stringResource(R.string.settings_bottom_bar),
+                        selectedLabel = stringResource(appearance.bottomBarStyle.labelRes()),
+                        icon = XPlayerIcons.Grid,
+                        options = BottomBarStyle.entries.map {
+                            SheetOption(stringResource(it.labelRes()), it)
+                        },
+                        selected = appearance.bottomBarStyle,
+                        onSelect = { style ->
+                            viewModel.update {
+                                it.copy(appearance = it.appearance.copy(bottomBarStyle = style))
+                            }
+                        },
+                    )
+                    InlinePickerRow(
+                        title = stringResource(R.string.settings_anim),
+                        selectedLabel = stringResource(appearance.animationLevel.labelRes()),
+                        icon = XPlayerIcons.Bolt,
+                        options = AnimationLevel.entries.map {
+                            SheetOption(stringResource(it.labelRes()), it)
+                        },
+                        selected = appearance.animationLevel,
+                        showDivider = false,
+                        onSelect = { level ->
+                            viewModel.update {
+                                it.copy(appearance = it.appearance.copy(animationLevel = level))
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColorSeedSwatch(
+    seed: ColorSeed,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val swatchColor = Color(seed.seed)
+    Column(
+        modifier = modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(swatchColor)
+                .then(
+                    if (selected) {
+                        Modifier.border(2.5.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                    } else {
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = stringResource(seed.labelRes()),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+fun EngineSettingsScreen(
+    onBack: () -> Unit,
+    onOpenCodec: () -> Unit,
+    viewModel: SettingsViewModel,
+) {
+    val settings by viewModel.settings.collectAsState()
+    val engine = settings.engine
+
+    SettingsPageScaffold(
+        title = stringResource(R.string.settings_group_engine),
+        onBack = onBack,
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(top = padding.calculateTopPadding() + 4.dp, bottom = 40.dp),
+        ) {
+            item {
+                StandaloneSwitchCard(
+                    title = stringResource(R.string.settings_ass_auto),
+                    subtitle = stringResource(
+                        if (engine.assAutoSwitch) {
+                            R.string.settings_ass_auto_desc_on
+                        } else {
+                            R.string.settings_ass_auto_desc_off
+                        },
+                    ),
+                    icon = XPlayerIcons.Subtitles,
+                    checked = engine.assAutoSwitch,
+                    onCheckedChange = { enabled ->
+                        viewModel.update { it.copy(engine = it.engine.copy(assAutoSwitch = enabled)) }
+                    },
+                )
+            }
+
+            item {
+                SettingGroup(title = stringResource(R.string.settings_group_engine)) {
+                    PickerSettingRow(
+                        title = stringResource(R.string.settings_engine_policy),
+                        subtitle = stringResource(engine.policy.summaryRes()),
+                        icon = XPlayerIcons.Memory,
+                        options = EnginePolicy.entries.map {
+                            SheetOption(stringResource(it.labelRes()), it, stringResource(it.summaryRes()))
+                        },
+                        selected = engine.policy,
+                        onSelect = { policy ->
+                            viewModel.update { it.copy(engine = it.engine.copy(policy = policy)) }
+                        },
+                    )
+                    PickerSettingRow(
+                        title = stringResource(R.string.settings_mpv_decoder),
+                        subtitle = stringResource(engine.mpvHwDecoder.labelRes()),
+                        icon = XPlayerIcons.Tune,
+                        options = MpvHwDecoder.entries.map {
+                            SheetOption(stringResource(it.labelRes()), it)
+                        },
+                        selected = engine.mpvHwDecoder,
+                        onSelect = { decoder ->
+                            viewModel.update { it.copy(engine = it.engine.copy(mpvHwDecoder = decoder)) }
+                        },
+                    )
+                    SettingSwitchRow(
+                        title = stringResource(R.string.settings_frame_rate),
+                        subtitle = stringResource(
+                            if (engine.frameRateMatching) {
+                                R.string.settings_frame_rate_desc_on
+                            } else {
+                                R.string.settings_frame_rate_desc_off
+                            },
+                        ),
+                        icon = XPlayerIcons.Speed,
+                        checked = engine.frameRateMatching,
+                        onCheckedChange = { enabled ->
+                            viewModel.update { it.copy(engine = it.engine.copy(frameRateMatching = enabled)) }
+                        },
+                    )
+                    SettingRow(
+                        title = stringResource(R.string.codec_title),
+                        subtitle = stringResource(R.string.home_codec_desc),
+                        icon = XPlayerIcons.Memory,
+                        onClick = onOpenCodec,
+                        trailing = { ChevronTrailing() },
+                        showDivider = false,
+                    )
+                }
+            }
         }
     }
 }

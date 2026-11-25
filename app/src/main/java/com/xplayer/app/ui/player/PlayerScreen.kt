@@ -16,15 +16,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -33,21 +37,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -64,9 +65,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -85,6 +89,7 @@ import com.xplayer.app.R
 import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.BackgroundBehavior
 import com.xplayer.app.data.datastore.GestureAction
+import com.xplayer.app.data.datastore.SingleTapAction
 import com.xplayer.app.data.datastore.labelRes
 import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.LocalFileSource
@@ -214,6 +219,7 @@ fun PlayerScreen(
             window?.attributes = window?.attributes?.apply {
                 screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
             }
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
@@ -246,8 +252,8 @@ fun PlayerScreen(
     }
 
     // 控制栏自动隐藏
-    LaunchedEffect(controlsVisible, state.isPlaying) {
-        if (controlsVisible && state.isPlaying && !viewModel.locked) {
+    LaunchedEffect(controlsVisible, state.isPlaying, sheet) {
+        if (controlsVisible && state.isPlaying && !viewModel.locked && sheet == null) {
             kotlinx.coroutines.delay(4_000)
             controlsVisible = false
         }
@@ -387,6 +393,9 @@ fun PlayerScreen(
                 if (viewModel.locked) {
                     // 锁屏时单击唤出解锁入口
                     controlsVisible = true
+                } else if (settings.gesture.singleTapAction == SingleTapAction.PLAY_PAUSE) {
+                    viewModel.controller.togglePlayPause()
+                    controlsVisible = true
                 } else {
                     controlsVisible = !controlsVisible
                 }
@@ -402,9 +411,9 @@ fun PlayerScreen(
             onZoom = { scale, _ -> zoomScale = scale },
         )
 
-        // 顶部 / 中央 / 底部控制层（布局参考 YouTube 安卓端，配色圆角沿用应用主题）
+        // 顶部 / 中央 / 底部控制层（布局参考 YouTube 安卓端，进度条与侧边面板借鉴哔哩哔哩）
         AnimatedVisibility(
-            visible = controlsVisible && !viewModel.locked,
+            visible = controlsVisible && !viewModel.locked && sheet == null,
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
@@ -480,15 +489,17 @@ fun PlayerScreen(
             }
         }
 
-        // 锁屏状态：只显示一个淡入的解锁按钮
+        // 锁屏状态：只显示一个淡入的解锁按钮（避开屏幕边缘与挖孔区）
         if (viewModel.locked) {
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .padding(20.dp)
+                    .displayCutoutPadding()
+                    .padding(start = 24.dp)
                     .size(46.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
                     .clickable { viewModel.toggleLock() },
                 contentAlignment = Alignment.Center,
             ) {
@@ -517,94 +528,95 @@ fun PlayerScreen(
             hostState = snackbar,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .displayCutoutPadding()
                 .navigationBarsPadding()
-                .padding(bottom = 96.dp),
+                .padding(bottom = 104.dp),
         )
-    }
 
-    when (sheet) {
-        PlayerSheet.TRACKS -> TracksSheet(
-            audioTracks = state.audioTracks,
-            subtitleTracks = state.subtitleTracks,
-            selectedAudio = state.selectedAudioId,
-            selectedSubtitle = state.selectedSubtitleId,
-            subtitleDelayMs = state.subtitleDelayMs,
-            supportsDelay = state.supportsSubtitleDelay,
-            onSelectAudio = { viewModel.controller.selectAudio(it) },
-            onSelectSubtitle = { viewModel.controller.selectSubtitle(it) },
-            onDelayChange = { viewModel.controller.setSubtitleDelay(it) },
-            onImportSubtitle = { sub: SidecarSubtitle -> viewModel.controller.addExternalSubtitle(sub) },
-            onDismiss = { sheet = null },
-        )
-        PlayerSheet.SPEED -> SpeedSheet(
-            current = state.speed,
-            onSpeed = { viewModel.controller.setSpeed(it) },
-            onDismiss = { sheet = null },
-        )
-        PlayerSheet.ASPECT -> AspectSheet(
-            current = viewModel.aspectMode,
-            onSelect = { viewModel.setAspect(it) },
-            onDismiss = { sheet = null },
-        )
-        PlayerSheet.SUBTITLE -> SubtitleStyleSheet(
-            style = viewModel.subtitleStyle,
-            onChange = { viewModel.applySubtitleStyle(it) },
-            onDismiss = { sheet = null },
-        )
-        PlayerSheet.SETTINGS -> PlayerSettingsSheet(
-            engine = state.engine,
-            mpvAvailable = com.xplayer.app.player.engine.EngineAvailability.mpvAvailable,
-            mpvBlockedByUri = viewModel.sourceKind == "uri",
-            aspectLabel = stringResource(viewModel.aspectMode.labelRes()),
-            rotationMode = rotationMode,
-            onSwitchEngine = { target ->
-                sheet = null
-                if (target != state.engine) viewModel.switchEngine(target)
-            },
-            onAspect = { sheet = PlayerSheet.ASPECT },
-            onSubtitleStyle = { sheet = PlayerSheet.SUBTITLE },
-            onScreenshot = {
-                sheet = null
-                takeScreenshot()
-            },
-            onBackgroundAudio = {
-                sheet = null
-                ensureNotificationPermission()
-                if (startBackgroundAudio(context, viewModel, state.positionMs) != null) {
-                    serviceRunning = true
-                    viewModel.controller.pause()
-                    scope.launch {
-                        snackbar.showSnackbar(context.getString(R.string.player_background_started))
+        when (sheet) {
+            PlayerSheet.TRACKS -> TracksSheet(
+                audioTracks = state.audioTracks,
+                subtitleTracks = state.subtitleTracks,
+                selectedAudio = state.selectedAudioId,
+                selectedSubtitle = state.selectedSubtitleId,
+                subtitleDelayMs = state.subtitleDelayMs,
+                supportsDelay = state.supportsSubtitleDelay,
+                onSelectAudio = { viewModel.controller.selectAudio(it) },
+                onSelectSubtitle = { viewModel.controller.selectSubtitle(it) },
+                onDelayChange = { viewModel.controller.setSubtitleDelay(it) },
+                onImportSubtitle = { sub: SidecarSubtitle -> viewModel.controller.addExternalSubtitle(sub) },
+                onDismiss = { sheet = null },
+            )
+            PlayerSheet.SPEED -> SpeedSheet(
+                current = state.speed,
+                onSpeed = { viewModel.controller.setSpeed(it) },
+                onDismiss = { sheet = null },
+            )
+            PlayerSheet.ASPECT -> AspectSheet(
+                current = viewModel.aspectMode,
+                onSelect = { viewModel.setAspect(it) },
+                onDismiss = { sheet = null },
+            )
+            PlayerSheet.SUBTITLE -> SubtitleStyleSheet(
+                style = viewModel.subtitleStyle,
+                onChange = { viewModel.applySubtitleStyle(it) },
+                onDismiss = { sheet = null },
+            )
+            PlayerSheet.SETTINGS -> PlayerSettingsSheet(
+                engine = state.engine,
+                mpvAvailable = com.xplayer.app.player.engine.EngineAvailability.mpvAvailable,
+                mpvBlockedByUri = viewModel.sourceKind == "uri",
+                aspectLabel = stringResource(viewModel.aspectMode.labelRes()),
+                rotationMode = rotationMode,
+                onSwitchEngine = { target ->
+                    sheet = null
+                    if (target != state.engine) viewModel.switchEngine(target)
+                },
+                onAspect = { sheet = PlayerSheet.ASPECT },
+                onSubtitleStyle = { sheet = PlayerSheet.SUBTITLE },
+                onScreenshot = {
+                    sheet = null
+                    takeScreenshot()
+                },
+                onBackgroundAudio = {
+                    sheet = null
+                    ensureNotificationPermission()
+                    if (startBackgroundAudio(context, viewModel, state.positionMs) != null) {
+                        serviceRunning = true
+                        viewModel.controller.pause()
+                        scope.launch {
+                            snackbar.showSnackbar(context.getString(R.string.player_background_started))
+                        }
                     }
-                }
-            },
-            onPip = {
-                sheet = null
-                val ok = activity?.let {
-                    PipController.enter(it, state.videoWidth, state.videoHeight, state.isPlaying)
-                } ?: false
-                if (!ok) {
-                    scope.launch {
-                        snackbar.showSnackbar(context.getString(R.string.player_pip_failed))
+                },
+                onPip = {
+                    sheet = null
+                    val ok = activity?.let {
+                        PipController.enter(it, state.videoWidth, state.videoHeight, state.isPlaying)
+                    } ?: false
+                    if (!ok) {
+                        scope.launch {
+                            snackbar.showSnackbar(context.getString(R.string.player_pip_failed))
+                        }
                     }
-                }
-            },
-            onRotate = { mode ->
-                rotationMode = mode
-                applyRotation(activity, mode)
-            },
-            onMediaInfo = {
-                sheet = null
-                onOpenMediaInfo()
-            },
-            onLock = {
-                sheet = null
-                viewModel.toggleLock()
-                controlsVisible = false
-            },
-            onDismiss = { sheet = null },
-        )
-        null -> Unit
+                },
+                onRotate = { mode ->
+                    rotationMode = mode
+                    applyRotation(activity, mode)
+                },
+                onMediaInfo = {
+                    sheet = null
+                    onOpenMediaInfo()
+                },
+                onLock = {
+                    sheet = null
+                    viewModel.toggleLock()
+                    controlsVisible = false
+                },
+                onDismiss = { sheet = null },
+            )
+            null -> Unit
+        }
     }
 }
 
@@ -619,8 +631,9 @@ private fun PlayerTopBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .displayCutoutPadding()
             .statusBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         OverlayIconButton(
@@ -744,28 +757,48 @@ private fun PlayerBottomBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .displayCutoutPadding()
             .navigationBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 20.dp, vertical = 10.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (dragging) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(bottom = 8.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                    .padding(horizontal = 14.dp, vertical = 5.dp),
+            ) {
+                Text(
+                    text = "${Formatters.duration(position)} / ${Formatters.duration(state.durationMs)}",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
                 text = Formatters.duration(position),
-                color = Color.White.copy(alpha = 0.9f),
-                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.92f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
             )
-            Slider(
-                value = position.toFloat().coerceIn(0f, duration.toFloat()),
-                onValueChange = onSeekPreview,
-                onValueChangeFinished = { onSeekCommit(position.toFloat()) },
-                valueRange = 0f..duration.toFloat(),
+            BilibiliSeekBar(
+                positionMs = position,
+                bufferedMs = state.bufferedMs,
+                durationMs = duration,
+                dragging = dragging,
+                onSeekPreview = onSeekPreview,
+                onSeekCommit = onSeekCommit,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 8.dp),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                ),
+                    .padding(horizontal = 10.dp),
             )
             Text(
                 text = if (showRemaining) {
@@ -773,8 +806,9 @@ private fun PlayerBottomBar(
                 } else {
                     Formatters.duration(state.durationMs)
                 },
-                color = Color.White.copy(alpha = 0.9f),
-                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.85f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
                 modifier = Modifier.clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -782,6 +816,7 @@ private fun PlayerBottomBar(
                 ),
             )
         }
+        Spacer(Modifier.height(4.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -834,6 +869,114 @@ private fun PlayerBottomBar(
                 icon = Icons.Default.Settings,
                 onClick = onSettings,
                 contentDescription = stringResource(R.string.player_settings),
+            )
+        }
+    }
+}
+
+/** 哔哩哔哩风格纤细进度条：细圆轨 + 缓冲条 + 主题色已播轨 + 紧凑白点游标（拖动加粗） */
+@Composable
+private fun BilibiliSeekBar(
+    positionMs: Long,
+    bufferedMs: Long,
+    durationMs: Long,
+    dragging: Boolean,
+    onSeekPreview: (Float) -> Unit,
+    onSeekCommit: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val activeColor = MaterialTheme.colorScheme.primary
+    val total = durationMs.coerceAtLeast(1L).toFloat()
+    val fraction = (positionMs.toFloat() / total).coerceIn(0f, 1f)
+    val bufferedFraction = (bufferedMs.toFloat() / total).coerceIn(0f, 1f)
+    val latestTotal by rememberUpdatedState(total)
+    val latestOnPreview by rememberUpdatedState(onSeekPreview)
+    val latestOnCommit by rememberUpdatedState(onSeekCommit)
+
+    Box(
+        modifier = modifier
+            .height(28.dp)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val w = size.width.coerceAtLeast(1).toFloat()
+                    var currentTarget = ((down.position.x / w).coerceIn(0f, 1f)) * latestTotal
+                    latestOnPreview(currentTarget)
+                    down.consume()
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) {
+                            change.consume()
+                            break
+                        }
+                        currentTarget = ((change.position.x / w).coerceIn(0f, 1f)) * latestTotal
+                        latestOnPreview(currentTarget)
+                        change.consume()
+                    }
+                    latestOnCommit(currentTarget)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp),
+        ) {
+            val y = size.height / 2f
+            val trackHeight = if (dragging) 4.5.dp.toPx() else 3.dp.toPx()
+            val thumbRadius = if (dragging) 7.5.dp.toPx() else 5.5.dp.toPx()
+            val usableWidth = (size.width - thumbRadius * 2f).coerceAtLeast(1f)
+            val startX = thumbRadius
+            val endX = startX + usableWidth
+            val playedX = startX + usableWidth * fraction
+            val bufferedX = startX + usableWidth * bufferedFraction
+
+            // 底层未播轨道
+            drawLine(
+                color = Color.White.copy(alpha = 0.28f),
+                start = Offset(startX, y),
+                end = Offset(endX, y),
+                strokeWidth = trackHeight,
+                cap = StrokeCap.Round,
+            )
+            // 缓冲进度
+            if (bufferedX > playedX) {
+                drawLine(
+                    color = Color.White.copy(alpha = 0.50f),
+                    start = Offset(playedX, y),
+                    end = Offset(bufferedX, y),
+                    strokeWidth = trackHeight,
+                    cap = StrokeCap.Round,
+                )
+            }
+            // 已播进度
+            drawLine(
+                color = activeColor,
+                start = Offset(startX, y),
+                end = Offset(playedX, y),
+                strokeWidth = trackHeight,
+                cap = StrokeCap.Round,
+            )
+            // 拖动光晕 + 白色圆点游标
+            if (dragging) {
+                drawCircle(
+                    color = activeColor.copy(alpha = 0.35f),
+                    radius = thumbRadius + 4.dp.toPx(),
+                    center = Offset(playedX, y),
+                )
+            }
+            drawCircle(
+                color = Color.White,
+                radius = thumbRadius,
+                center = Offset(playedX, y),
+            )
+            drawCircle(
+                color = activeColor,
+                radius = thumbRadius * 0.36f,
+                center = Offset(playedX, y),
             )
         }
     }

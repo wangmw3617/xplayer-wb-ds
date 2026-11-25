@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +49,9 @@ class FrostedBackdropState internal constructor(
 ) {
     internal var sourceOriginInRoot by mutableStateOf(Offset.Zero)
 }
+
+/** 全局底栏等跨页悬浮控件共享的背景采样源 */
+val LocalAppBackdropState = staticCompositionLocalOf<FrostedBackdropState?> { null }
 
 @Composable
 fun rememberFrostedBackdropState(): FrostedBackdropState {

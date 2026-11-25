@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import java.io.File
 
-/** FlClash 风格分组：小号主题色标题 + 圆角卡片容器 */
+/** FlClash 风格分组：中性或柔和次标题 + 高圆角纯白/深色卡片容器 */
 @Composable
 fun SettingGroup(
     title: String? = null,
@@ -55,21 +55,51 @@ fun SettingGroup(
         if (!title.isNullOrBlank()) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 28.dp, top = 18.dp, bottom = 6.dp),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 24.dp, top = 20.dp, bottom = 8.dp),
             )
         }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp)
-                .clip(RoundedCornerShape(20.dp))
+                .padding(horizontal = 16.dp)
+                .clip(RoundedCornerShape(22.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
             content()
         }
+    }
+}
+
+/** 复刻 FlClash「自动更新」式的独立单行开关卡片 */
+@Composable
+fun StandaloneSwitchCard(
+    title: String,
+    subtitle: String? = null,
+    icon: ImageVector? = null,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        SettingSwitchRow(
+            title = title,
+            subtitle = subtitle,
+            icon = icon,
+            checked = checked,
+            enabled = enabled,
+            showDivider = false,
+            onCheckedChange = onCheckedChange,
+        )
     }
 }
 
@@ -89,7 +119,7 @@ fun SettingRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 18.dp, vertical = 15.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (icon != null) {
@@ -97,7 +127,7 @@ fun SettingRow(
                     imageVector = icon,
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(22.dp),
                 )
                 Spacer(Modifier.width(16.dp))
             }
@@ -125,12 +155,9 @@ fun SettingRow(
         }
         if (showDivider) {
             HorizontalDivider(
-                // 右侧留白：分割线不要顶到卡片边，视觉上更松弛
-                modifier = Modifier.padding(
-                    start = if (icon != null) 56.dp else 20.dp,
-                    end = 20.dp,
-                ),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                modifier = Modifier.padding(horizontal = 18.dp),
+                thickness = 0.6.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
             )
         }
     }
@@ -143,6 +170,7 @@ fun SettingSwitchRow(
     icon: ImageVector? = null,
     checked: Boolean,
     enabled: Boolean = true,
+    showDivider: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     SettingRow(
@@ -153,6 +181,7 @@ fun SettingSwitchRow(
         trailing = {
             Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
         },
+        showDivider = showDivider,
     )
 }
 
@@ -162,17 +191,70 @@ fun ChevronTrailing(text: String? = null) {
         if (!text.isNullOrBlank()) {
             Text(
                 text = text,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            Spacer(Modifier.width(4.dp))
         }
         Icon(
             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
             modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+/** 复刻 FlClash「默认 ⌄」行内下拉指示器，点击弹出单选面板 */
+@Composable
+fun <T> InlinePickerRow(
+    title: String,
+    selectedLabel: String,
+    icon: ImageVector? = null,
+    options: List<SheetOption<T>>,
+    selected: T,
+    enabled: Boolean = true,
+    showDivider: Boolean = true,
+    onSelect: (T) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    SettingRow(
+        title = title,
+        icon = icon,
+        onClick = if (enabled) {
+            { open = true }
+        } else {
+            null
+        },
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = selectedLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    imageVector = com.xplayer.app.ui.icons.XPlayerIcons.UnfoldMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        },
+        showDivider = showDivider,
+    )
+    if (open) {
+        OptionSheet(
+            title = title,
+            options = options,
+            selected = selected,
+            onSelect = onSelect,
+            onDismiss = { open = false },
         )
     }
 }

@@ -249,6 +249,15 @@ object XPlayerIcons {
             Vec("M19.2,6.2 L17.2,8 L16.7,5.5"),
         )
     }
+
+    /** 上下双箭头（复刻 FlClash 行内选择指示） */
+    val UnfoldMore: ImageVector by lazy {
+        vector(
+            "UnfoldMore",
+            Vec("M8.5,9.5 L12,6 L15.5,9.5"),
+            Vec("M8.5,14.5 L12,18 L15.5,14.5"),
+        )
+    }
 }
 
 private class Vec(val data: String, val filled: Boolean = false, val width: Float = 1.7f)

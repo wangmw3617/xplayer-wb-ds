@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,14 +94,29 @@ fun PlayerGestureOverlay(
     var zoomScale by remember { mutableFloatStateOf(1f) }
     var zoomPan by remember { mutableStateOf(Offset.Zero) }
 
+    // positionMs 每 300-400ms 刷新一次，必须通过 rememberUpdatedState 读取而不能放进 pointerInput key，
+    // 否则播放过程中每半秒就会打断手势识别导致单击/双击/滑动失效
+    val latestPositionMs by rememberUpdatedState(positionMs)
+    val latestDurationMs by rememberUpdatedState(durationMs)
+    val latestBrightness by rememberUpdatedState(brightness)
+    val latestVolume by rememberUpdatedState(volume)
+    val latestOnBrightness by rememberUpdatedState(onBrightness)
+    val latestOnVolume by rememberUpdatedState(onVolume)
+    val latestOnSeekPreview by rememberUpdatedState(onSeekPreview)
+    val latestOnSeekCommit by rememberUpdatedState(onSeekCommit)
+    val latestOnSingleTap by rememberUpdatedState(onSingleTap)
+    val latestOnDoubleTap by rememberUpdatedState(onDoubleTap)
+    val latestOnLongPressSpeed by rememberUpdatedState(onLongPressSpeed)
+    val latestOnZoom by rememberUpdatedState(onZoom)
+
     fun fireDoubleTap(action: GestureAction) {
-        if (action != GestureAction.DISABLED) onDoubleTap(action)
+        if (action != GestureAction.DISABLED) latestOnDoubleTap(action)
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .pointerInput(prefs, locked, positionMs, durationMs) {
+            .pointerInput(prefs, locked) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (locked) {
@@ -112,7 +128,7 @@ fun PlayerGestureOverlay(
                             if (change.positionChange() != Offset.Zero) anyMove = true
                             if (!change.pressed) break
                         }
-                        if (!anyMove) onSingleTap()
+                        if (!anyMove) latestOnSingleTap()
                         return@awaitEachGesture
                     }
 
@@ -136,17 +152,20 @@ fun PlayerGestureOverlay(
                     var longPressActive = false
                     var dragMode: DragMode? = null
                     var accumulated = Offset.Zero
-                    var seekTarget = positionMs
-                    var baseBrightness = brightness
-                    var baseVolume = volume
+                    val startPositionMs = latestPositionMs
+                    val totalDurationMs = latestDurationMs
+                    var seekTarget = startPositionMs
+                    val baseBrightness = latestBrightness
+                    val baseVolume = latestVolume
                     var baseLevel = 0f
+                    var levelInitialized = false
 
                     val longPressJob = scope.launch {
                         delay(prefs.longPressDelayMs)
                         if (prefs.longPressEnabled && !moved) {
                             longPressActive = true
                             zoomScale = 1f
-                            onLongPressSpeed(prefs.longPressSpeed)
+                            latestOnLongPressSpeed(prefs.longPressSpeed)
                             hud = GestureHud.Speed(prefs.longPressSpeed)
                         }
                     }
@@ -163,7 +182,7 @@ fun PlayerGestureOverlay(
                                 zoomScale = (zoomScale * zoom).coerceIn(0.5f, 4f)
                                 zoomPan += pan
                                 if (prefs.zoomMode == ZoomMode.FREE) {
-                                    onZoom(zoomScale, zoomPan)
+                                    latestOnZoom(zoomScale, zoomPan)
                                     hud = GestureHud.Zoom((zoomScale * 100).roundToInt().toFloat())
                                 }
                             }
@@ -185,7 +204,7 @@ fun PlayerGestureOverlay(
                             if (longPressActive && prefs.longPressDragSpeed) {
                                 val speed = (prefs.longPressSpeed + accumulated.x / size.width * 3f)
                                     .coerceIn(0.5f, 4f)
-                                onLongPressSpeed(speed)
+                                latestOnLongPressSpeed(speed)
                                 hud = GestureHud.Speed(speed)
                                 change.consume()
                                 continue
@@ -200,11 +219,11 @@ fun PlayerGestureOverlay(
 
                             when (dragMode) {
                                 DragMode.HORIZONTAL -> {
-                                    val span = prefs.seekSpan.resolveMillis(durationMs)
+                                    val span = prefs.seekSpan.resolveMillis(totalDurationMs)
                                     val deltaMs = (accumulated.x / size.width * span).toLong()
-                                    seekTarget = (positionMs + deltaMs).coerceIn(0L, durationMs.coerceAtLeast(0L))
-                                    hud = GestureHud.Seek(seekTarget, seekTarget - positionMs)
-                                    onSeekPreview(seekTarget)
+                                    seekTarget = (startPositionMs + deltaMs).coerceIn(0L, totalDurationMs.coerceAtLeast(0L))
+                                    hud = GestureHud.Seek(seekTarget, seekTarget - startPositionMs)
+                                    latestOnSeekPreview(seekTarget)
                                 }
                                 DragMode.VERTICAL -> {
                                     val action = if (zone == HorizontalZone.RIGHT) prefs.rightAction else prefs.leftAction
@@ -216,16 +235,22 @@ fun PlayerGestureOverlay(
                                     val fraction = -accumulated.y / size.height * prefs.swipeSensitivity
                                     when (action) {
                                         VerticalGestureAction.BRIGHTNESS -> {
-                                            if (baseLevel == 0f) baseLevel = baseBrightness
+                                            if (!levelInitialized) {
+                                                baseLevel = baseBrightness
+                                                levelInitialized = true
+                                            }
                                             val value = (baseLevel + fraction).coerceIn(0.02f, 1f)
-                                            onBrightness(value)
+                                            latestOnBrightness(value)
                                             hud = GestureHud.Level(action, (value * 100).toInt())
                                         }
                                         VerticalGestureAction.VOLUME -> {
-                                            if (baseLevel == 0f) baseLevel = baseVolume
+                                            if (!levelInitialized) {
+                                                baseLevel = baseVolume
+                                                levelInitialized = true
+                                            }
                                             val max = if (prefs.volumeBoost) 2f else 1f
                                             val value = (baseLevel + fraction).coerceIn(0f, max)
-                                            onVolume(value)
+                                            latestOnVolume(value)
                                             hud = GestureHud.Level(action, (value * 100).toInt())
                                         }
                                         VerticalGestureAction.DISABLED -> Unit
@@ -239,11 +264,11 @@ fun PlayerGestureOverlay(
 
                     longPressJob.cancel()
                     if (longPressActive) {
-                        onLongPressSpeed(null)
+                        latestOnLongPressSpeed(null)
                         hud = null
                         zoomScale = 1f
                     } else if (moved && dragMode == DragMode.HORIZONTAL) {
-                        onSeekCommit(seekTarget)
+                        latestOnSeekCommit(seekTarget)
                         hud = null
                     } else if (moved) {
                         hud = null
@@ -262,10 +287,7 @@ fun PlayerGestureOverlay(
                             pendingTap?.cancel()
                             pendingTap = scope.launch {
                                 delay(300)
-                                when (prefs.singleTapAction) {
-                                    SingleTapAction.TOGGLE_CONTROLS -> onSingleTap()
-                                    SingleTapAction.PLAY_PAUSE -> onSingleTap()
-                                }
+                                latestOnSingleTap()
                             }
                         }
                     }

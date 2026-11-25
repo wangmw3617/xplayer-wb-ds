@@ -35,11 +35,29 @@ object SubtitleFinder {
     fun find(videoPath: String): List<SidecarSubtitle> {
         val video = File(videoPath)
         val dir = video.parentFile ?: return emptyList()
+        val files = runCatching { dir.listFiles() }.getOrNull() ?: return emptyList()
+        val subFiles = files.filter { it.isFile && isSubtitle(it.name) }
+        return matchForVideo(video, subFiles)
+    }
+
+    /**
+     * 对同一目录下的多个视频只列举一次磁盘目录，避免播放列表加载时 N 次 listFiles 阻塞主线程/FUSE。
+     */
+    fun findForFolder(dirPath: String, videoPaths: List<String>): Map<String, List<SidecarSubtitle>> {
+        if (videoPaths.isEmpty()) return emptyMap()
+        val dir = File(dirPath)
+        val files = runCatching { dir.listFiles() }.getOrNull() ?: return emptyMap()
+        val subFiles = files.filter { it.isFile && isSubtitle(it.name) }
+        if (subFiles.isEmpty()) return emptyMap()
+        return videoPaths.associateWith { path ->
+            matchForVideo(File(path), subFiles)
+        }
+    }
+
+    private fun matchForVideo(video: File, subFiles: List<File>): List<SidecarSubtitle> {
         val base = video.nameWithoutExtension.lowercase(Locale.US)
         if (base.isEmpty()) return emptyList()
-        val files = runCatching { dir.listFiles() }.getOrNull() ?: return emptyList()
-        return files.asSequence()
-            .filter { it.isFile && isSubtitle(it.name) }
+        return subFiles.asSequence()
             .filter { file ->
                 val name = file.nameWithoutExtension.lowercase(Locale.US)
                 name == base ||

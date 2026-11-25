@@ -3,14 +3,23 @@ package com.xplayer.app.data.datastore
 import androidx.annotation.StringRes
 import com.xplayer.app.R
 
-enum class ThemeMode { SYSTEM, LIGHT, DARK, AMOLED }
+enum class ThemeMode { SYSTEM, LIGHT, DARK }
+
+enum class DarkSurfaceMode { STANDARD, PURE_BLACK }
+
+enum class BottomBarStyle { LIQUID_GLASS, FLOATING_PILL, CLASSIC }
+
+enum class AnimationLevel { STANDARD, SNAPPY, OFF }
 
 enum class ColorSeed(val seed: Long) {
-    OCEAN(0xFF2F6BFF),
-    FOREST(0xFF2E7D55),
-    SUNSET(0xFFE0663A),
-    VIOLET(0xFF7A5AF8),
-    ROSE(0xFFE0457B),
+    OCEAN(0xFF1677FF),
+    INDIGO(0xFF4F46E5),
+    VIOLET(0xFF7C3AED),
+    ROSE(0xFFE11D48),
+    SUNSET(0xFFF97316),
+    AMBER(0xFFD97706),
+    FOREST(0xFF10B981),
+    TEAL(0xFF0D9488),
     SLATE(0xFF5B6573),
 }
 
@@ -71,9 +80,12 @@ enum class RotationMode { AUTO, LANDSCAPE, PORTRAIT }
 enum class ScreenshotFormat { PNG, JPEG }
 
 data class AppearancePrefs(
-    val dynamicColor: Boolean = true,
+    val dynamicColor: Boolean = false,
     val seed: ColorSeed = ColorSeed.OCEAN,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val darkSurfaceMode: DarkSurfaceMode = DarkSurfaceMode.STANDARD,
+    val bottomBarStyle: BottomBarStyle = BottomBarStyle.LIQUID_GLASS,
+    val animationLevel: AnimationLevel = AnimationLevel.STANDARD,
 )
 
 data class EnginePrefs(
@@ -147,16 +159,38 @@ fun ThemeMode.labelRes(): Int = when (this) {
     ThemeMode.SYSTEM -> R.string.settings_dark_system
     ThemeMode.LIGHT -> R.string.settings_dark_light
     ThemeMode.DARK -> R.string.settings_dark_dark
-    ThemeMode.AMOLED -> R.string.settings_dark_amoled
+}
+
+@StringRes
+fun DarkSurfaceMode.labelRes(): Int = when (this) {
+    DarkSurfaceMode.STANDARD -> R.string.settings_dark_surface_standard
+    DarkSurfaceMode.PURE_BLACK -> R.string.settings_dark_surface_pure_black
+}
+
+@StringRes
+fun BottomBarStyle.labelRes(): Int = when (this) {
+    BottomBarStyle.LIQUID_GLASS -> R.string.settings_bottom_bar_liquid_glass
+    BottomBarStyle.FLOATING_PILL -> R.string.settings_bottom_bar_floating_pill
+    BottomBarStyle.CLASSIC -> R.string.settings_bottom_bar_classic
+}
+
+@StringRes
+fun AnimationLevel.labelRes(): Int = when (this) {
+    AnimationLevel.STANDARD -> R.string.settings_anim_standard
+    AnimationLevel.SNAPPY -> R.string.settings_anim_snappy
+    AnimationLevel.OFF -> R.string.settings_anim_off
 }
 
 @StringRes
 fun ColorSeed.labelRes(): Int = when (this) {
     ColorSeed.OCEAN -> R.string.settings_seed_ocean
-    ColorSeed.FOREST -> R.string.settings_seed_forest
-    ColorSeed.SUNSET -> R.string.settings_seed_sunset
+    ColorSeed.INDIGO -> R.string.settings_seed_indigo
     ColorSeed.VIOLET -> R.string.settings_seed_violet
     ColorSeed.ROSE -> R.string.settings_seed_rose
+    ColorSeed.SUNSET -> R.string.settings_seed_sunset
+    ColorSeed.AMBER -> R.string.settings_seed_amber
+    ColorSeed.FOREST -> R.string.settings_seed_forest
+    ColorSeed.TEAL -> R.string.settings_seed_teal
     ColorSeed.SLATE -> R.string.settings_seed_slate
 }
 

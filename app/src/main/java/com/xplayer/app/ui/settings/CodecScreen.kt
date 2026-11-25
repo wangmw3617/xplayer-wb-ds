@@ -53,7 +53,13 @@ fun CodecScreen(onBack: () -> Unit) {
         loading = false
     }
 
-    SettingsPageScaffold(title = stringResource(R.string.codec_title), onBack = onBack) { padding ->
+    SettingsPageScaffold(
+        title = stringResource(R.string.codec_title),
+        onBack = onBack,
+        actionIcon = Icons.Default.Refresh,
+        actionDescription = stringResource(R.string.codec_refresh),
+        onAction = { reload++ },
+    ) { padding ->
         if (loading) {
             Column(
                 modifier = Modifier
