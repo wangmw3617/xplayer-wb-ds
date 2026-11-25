@@ -18,8 +18,8 @@ android {
         applicationId = "com.xplayer.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.4.0"
+        versionCode = 7
+        versionName = "1.4.1"
         vectorDrawables { useSupportLibrary = true }
     }
 
