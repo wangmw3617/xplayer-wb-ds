@@ -1,38 +1,28 @@
 package com.xplayer.app.ui.settings
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import kotlinx.coroutines.launch
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -43,12 +33,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.xplayer.app.R
 import com.xplayer.app.data.datastore.ColorSeed
 import com.xplayer.app.data.datastore.EnginePolicy
@@ -58,11 +51,16 @@ import com.xplayer.app.data.datastore.labelRes
 import com.xplayer.app.data.datastore.summaryRes
 import com.xplayer.app.ui.common.rememberAppVM
 import com.xplayer.app.ui.components.ChevronTrailing
+import com.xplayer.app.ui.components.FrostedBackdropState
+import com.xplayer.app.ui.components.FrostedGlassSurface
+import com.xplayer.app.ui.components.FrostedHeaderScrim
 import com.xplayer.app.ui.components.PickerSettingRow
 import com.xplayer.app.ui.components.SettingGroup
 import com.xplayer.app.ui.components.SettingRow
 import com.xplayer.app.ui.components.SettingSwitchRow
 import com.xplayer.app.ui.components.SheetOption
+import com.xplayer.app.ui.components.frostedBackdropSource
+import com.xplayer.app.ui.components.rememberFrostedBackdropState
 import com.xplayer.app.ui.icons.XPlayerIcons
 import com.xplayer.app.ui.permission.PermissionBanner
 import com.xplayer.app.ui.navigation.Routes
@@ -85,6 +83,7 @@ fun SettingsScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val headerInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val backdropState = rememberFrostedBackdropState()
     var showSeedSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -96,16 +95,22 @@ fun SettingsScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                // 顶部留出胶囊标题的高度，内容可以滚动到标题下面
-                top = headerInset + 92.dp,
-                bottom = 110.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(0.dp),
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .frostedBackdropSource(backdropState)
+                .background(MaterialTheme.colorScheme.background),
         ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    // 顶部留出悬浮磨砂玻璃控件高度，滚动后内容可从下方穿过并产生模糊
+                    top = headerInset + 76.dp,
+                    bottom = 110.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
             if (!permissionGranted) {
                 item {
                     PermissionBanner(
@@ -350,9 +355,11 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         SettingsPillHeader(
             title = stringResource(R.string.settings_title),
+            backdropState = backdropState,
             onClick = {
                 scope.launch { listState.animateScrollToItem(0) }
             },
@@ -386,52 +393,35 @@ fun SettingsScreen(
 }
 
 /**
- * 左上角胶囊标题 + 顶部透明渐变遮罩。
- * 内容滚动到标题下方时会被渐变自然吞掉，视觉上和 FlClash 的设置页一致。
+ * 左上角圆形（全圆角）磨砂玻璃「设置」控件 + 顶部渐变遮罩，点击回滚顶部。
  */
 @Composable
 private fun SettingsPillHeader(
     title: String,
+    backdropState: FrostedBackdropState,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val background = MaterialTheme.colorScheme.background
     Box(modifier = modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to background,
-                        0.48f to background.copy(alpha = 0.94f),
-                        0.80f to background.copy(alpha = 0.52f),
-                        1f to Color.Transparent,
-                    ),
-                ),
-        )
+        FrostedHeaderScrim(modifier = Modifier.matchParentSize())
         Column {
-            Box(
+            FrostedGlassSurface(
+                backdropState = backdropState,
+                shape = CircleShape,
+                onClick = onClick,
                 modifier = Modifier
                     .statusBarsPadding()
-                    .padding(start = 20.dp, top = 8.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                        shape = RoundedCornerShape(50),
-                    )
-                    .clickable(onClick = onClick)
-                    .padding(horizontal = 20.dp, vertical = 7.dp),
+                    .padding(start = 16.dp, top = 8.dp),
             ) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 7.dp),
                 )
             }
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(18.dp))
         }
     }
 }

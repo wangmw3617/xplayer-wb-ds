@@ -3,8 +3,8 @@
 ## 版本号策略（重要）
 - **日常小修改（改 UI、修 bug、调文案等）一律不动 `versionCode` / `versionName`**，只提交推送；等用户明确说「发包」时才统一升版本。
 - 升版本规则：
-  - **功能更新** → `versionName` 末位 +1（1.3.0 → 1.3.1），`versionCode` +1
-  - **重点修改 / 大改版** → `versionName` 第二位 +1（1.3.x → 1.4.0），`versionCode` +1
+  - **功能更新** → `versionName` 末位 +1（1.4.0 → 1.4.1），`versionCode` +1
+  - **重点修改 / 大改版** → `versionName` 第二位 +1（1.4.x → 1.5.0），`versionCode` +1
 - 即：一次版本号可能对应多个提交，不要每次改动都 bump。
 
 ## 发布（重要）
