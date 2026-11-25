@@ -24,6 +24,6 @@ inline fun <reified VM : ViewModel> rememberAppVM(
     crossinline creator: (AppContainer) -> VM,
 ): VM {
     val container = appContainer()
-    val factory = remember { SimpleVMFactory { creator(container) } }
+    val factory = remember(key, container) { SimpleVMFactory { creator(container) } }
     return viewModel(key = key, factory = factory)
 }

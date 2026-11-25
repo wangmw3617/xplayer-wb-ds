@@ -3,20 +3,25 @@ package com.xplayer.app.player.engine
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
-import android.os.Looper
+import android.os.HandlerThread
 import android.util.Log
 import android.view.PixelCopy
+import android.view.Surface
 import android.view.SurfaceView
 import android.view.View
+import android.view.ViewGroup
 import androidx.annotation.OptIn
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -27,6 +32,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import com.xplayer.app.R
 import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.SubtitlePrefs
 import com.xplayer.app.data.source.ContentUriSource
@@ -34,8 +40,6 @@ import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.MediaSource
 import com.xplayer.app.data.source.NetworkUrlSource
 import com.xplayer.app.data.source.SidecarSubtitle
-import java.io.File
-import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,13 +48,17 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.File
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
 /**
- * Media3 内核：优先硬解 + FFmpeg 音频扩展，负责杜比视界 / HDR10 直通、
- * 多轨选择、外挂字幕与 PixelCopy 截帧。
+ * Media3 内核：优先硬解 + FFmpeg 音频扩展，支持音频焦点/拔出耳机暂停、
+ * 杜比视界/HDR10 直通、多轨选择与子线程 PixelCopy 截帧。
  */
 @OptIn(UnstableApi::class)
 class Media3EngineImpl(
@@ -65,6 +73,8 @@ class Media3EngineImpl(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var positionJob: Job? = null
+    private var copyThread: HandlerThread? = null
+    private var copyHandler: Handler? = null
 
     private var player: ExoPlayer? = null
     private var playerView: PlayerView? = null
@@ -75,22 +85,33 @@ class Media3EngineImpl(
     private var subtitleStyle = SubtitlePrefs()
     private var aspectMode = AspectMode.FIT
     private var pendingSpeed = 1f
+    private var pendingVolume = 1f
     private var preciseSeek = false
+    private var pendingSelectAudioId: String? = null
+    private var pendingSelectSubtitleId: String? = null
+    private var pendingSelectSubtitleExplicit = false
+    private var pendingSelectExternalSubPath: String? = null
+    private var pixelWidthHeightRatio = 1f
 
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             val p = player ?: return
+            val safeDuration = p.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: _state.value.durationMs
             _state.value = _state.value.copy(
                 isBuffering = playbackState == Player.STATE_BUFFERING,
                 ready = playbackState == Player.STATE_READY || playbackState == Player.STATE_ENDED,
                 ended = playbackState == Player.STATE_ENDED,
                 positionMs = p.currentPosition.coerceAtLeast(0L),
-                durationMs = p.duration.coerceAtLeast(0L),
+                durationMs = safeDuration,
+                bufferedMs = p.bufferedPosition.coerceAtLeast(0L),
                 isPlaying = p.isPlaying,
             )
             if (playbackState == Player.STATE_READY) {
                 readTracks(p)
+                applyPendingTrackSelections(p)
                 applyFrameRate()
+            } else if (playbackState == Player.STATE_ENDED) {
+                stopPositionLoop()
             }
         }
 
@@ -100,18 +121,24 @@ class Media3EngineImpl(
         }
 
         override fun onTracksChanged(tracks: Tracks) {
-            player?.let { readTracks(it) }
+            player?.let { p ->
+                readTracks(p)
+                applyPendingTrackSelections(p)
+            }
         }
 
-        override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+        override fun onVideoSizeChanged(videoSize: VideoSize) {
+            pixelWidthHeightRatio = if (videoSize.pixelWidthHeightRatio > 0f) videoSize.pixelWidthHeightRatio else 1f
             _state.value = _state.value.copy(
                 videoWidth = videoSize.width,
                 videoHeight = videoSize.height,
             )
+            if (aspectMode == AspectMode.ORIGINAL) setAspectRatio(AspectMode.ORIGINAL)
             applyFrameRate()
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            stopPositionLoop()
             Log.e(TAG, "playback error ${error.errorCodeName}: ${error.message}")
             _state.value = _state.value.copy(
                 error = error.errorCodeName,
@@ -122,6 +149,7 @@ class Media3EngineImpl(
     }
 
     override fun createVideoView(context: Context): View {
+        playerView?.player = null
         val view = PlayerView(context).apply {
             useController = false
             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
@@ -131,15 +159,15 @@ class Media3EngineImpl(
         }
         playerView = view
         val frame = AspectRatioFrameLayout(context).apply {
-            layoutParams = android.view.ViewGroup.LayoutParams(
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
             )
             addView(
                 view,
-                android.view.ViewGroup.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
                 ),
             )
         }
@@ -151,6 +179,7 @@ class Media3EngineImpl(
     }
 
     override fun prepare(source: MediaSource, startPositionMs: Long, subtitleStyle: SubtitlePrefs, speed: Float) {
+        val isSameSource = this.source?.key == source.key
         this.source = source
         this.subtitleStyle = subtitleStyle
         this.pendingSpeed = speed
@@ -158,8 +187,17 @@ class Media3EngineImpl(
         if (source is LocalFileSource) {
             externalSubtitles += source.subtitles
         }
+        if (!isSameSource) {
+            pendingSelectExternalSubPath = null
+        }
         applySubtitleStyle(subtitleStyle)
         startPlayback(startPositionMs, speed)
+    }
+
+    fun setPreferredTracks(audioId: String?, subtitleId: String?, subtitleExplicit: Boolean) {
+        pendingSelectAudioId = audioId
+        pendingSelectSubtitleId = subtitleId
+        pendingSelectSubtitleExplicit = subtitleExplicit
     }
 
     private fun startPlayback(startPositionMs: Long, speed: Float, playWhenReady: Boolean = true) {
@@ -181,7 +219,17 @@ class Media3EngineImpl(
 
         val exoPlayer = ExoPlayer.Builder(context, renderersFactory, mediaSourceFactory)
             .setSeekParameters(if (preciseSeek) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC)
-            .build()
+            .build().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                        .build(),
+                    true,
+                )
+                setHandleAudioBecomingNoisy(true)
+                volume = pendingVolume.coerceIn(0f, 2f)
+            }
         exoPlayer.addListener(listener)
         player = exoPlayer
         playerView?.player = exoPlayer
@@ -207,9 +255,9 @@ class Media3EngineImpl(
     private fun buildMediaItem(source: MediaSource): MediaItem {
         val builder = MediaItem.Builder()
         when (source) {
-            is LocalFileSource -> builder.setUri(android.net.Uri.fromFile(File(source.path)))
-            is ContentUriSource -> builder.setUri(android.net.Uri.parse(source.uri))
-            is NetworkUrlSource -> builder.setUri(android.net.Uri.parse(source.url))
+            is LocalFileSource -> builder.setUri(Uri.fromFile(File(source.path)))
+            is ContentUriSource -> builder.setUri(Uri.parse(source.uri))
+            is NetworkUrlSource -> builder.setUri(Uri.parse(source.url))
         }
         val subtitles = buildList {
             if (source is LocalFileSource) addAll(source.subtitles)
@@ -218,11 +266,12 @@ class Media3EngineImpl(
         if (subtitles.isNotEmpty()) {
             builder.setSubtitleConfigurations(
                 subtitles.map { sub ->
-                    MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(File(sub.path)))
+                    MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(File(sub.path)))
+                        .setId("$EXT_SUB_PREFIX${sub.path}")
                         .setMimeType(sub.mimeType)
                         .setLanguage(languageOf(sub.name))
                         .setLabel(sub.name)
-                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                        .setSelectionFlags(C.SELECTION_FLAG_AUTOSELECT)
                         .build()
                 },
             )
@@ -240,8 +289,8 @@ class Media3EngineImpl(
 
     override fun seekTo(positionMs: Long) {
         player?.let { p ->
-            val duration = p.duration.coerceAtLeast(0L)
-            val target = if (duration > 0) positionMs.coerceIn(0L, duration) else positionMs.coerceAtLeast(0L)
+            val duration = p.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: _state.value.durationMs
+            val target = if (duration > 0L) positionMs.coerceIn(0L, duration) else positionMs.coerceAtLeast(0L)
             p.seekTo(target)
             _state.value = _state.value.copy(positionMs = target, ended = false)
         }
@@ -255,8 +304,7 @@ class Media3EngineImpl(
 
     override fun selectAudioTrack(track: TrackInfo) {
         val p = player ?: return
-        val groups = p.currentTracks.groups
-        val group = groups.getOrNull(track.groupIndex) ?: return
+        val group = p.currentTracks.groups.getOrNull(track.groupIndex) ?: return
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
             .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, track.trackIndex))
@@ -280,15 +328,16 @@ class Media3EngineImpl(
     override fun addExternalSubtitle(subtitle: SidecarSubtitle) {
         externalSubtitles.removeAll { it.path == subtitle.path }
         externalSubtitles += subtitle
-        val position = player?.currentPosition ?: 0L
-        val wasPlaying = player?.isPlaying ?: false
-        startPlayback(position, pendingSpeed, playWhenReady = wasPlaying)
+        val p = player
+        val position = p?.currentPosition?.coerceAtLeast(0L) ?: _state.value.positionMs
+        val keepPlaying = p?.playWhenReady ?: true
+        pendingSelectAudioId = _state.value.selectedAudioId
+        pendingSelectExternalSubPath = subtitle.path
+        startPlayback(position, pendingSpeed, playWhenReady = keepPlaying)
     }
 
-    /** Media3 无字幕时间轴偏移能力，交由 mpv 处理（UI 会提示） */
-    override fun setSubtitleDelay(delayMs: Long) {
-        _state.value = _state.value.copy(subtitleDelayMs = delayMs)
-    }
+    /** Media3 暂不支持独立字幕时间轴偏移 */
+    override fun setSubtitleDelay(delayMs: Long) = Unit
 
     override fun applySubtitleStyle(style: SubtitlePrefs) {
         subtitleStyle = style
@@ -301,16 +350,16 @@ class Media3EngineImpl(
                 if (style.backgroundBar) 0x99000000.toInt() else Color.TRANSPARENT,
                 Color.TRANSPARENT,
                 when {
-                    style.outlinePercent <= 0 && !style.shadow -> CaptionStyleCompat.EDGE_TYPE_NONE
+                    style.outlinePercent > 0 && !style.shadow -> CaptionStyleCompat.EDGE_TYPE_OUTLINE
                     style.shadow -> CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW
-                    else -> CaptionStyleCompat.EDGE_TYPE_OUTLINE
+                    else -> CaptionStyleCompat.EDGE_TYPE_NONE
                 },
-                (0xFF000000 or (style.colorArgb and 0xFFFFFF)).toInt(),
+                Color.BLACK,
                 null,
             ),
         )
         subtitleView.setFractionalTextSize(0.0533f * (style.fontScalePercent / 100f))
-        subtitleView.setBottomPaddingFraction((style.bottomMarginDp.coerceAtLeast(0)) / 100f)
+        subtitleView.setBottomPaddingFraction((style.bottomMarginDp.coerceIn(0, 120) / 120f) * 0.25f)
     }
 
     override fun setAspectRatio(mode: AspectMode) {
@@ -341,7 +390,8 @@ class Media3EngineImpl(
             AspectMode.ORIGINAL -> {
                 val w = state.value.videoWidth
                 val h = state.value.videoHeight
-                frame.setAspectRatio(if (w > 0 && h > 0) w.toFloat() / h else 0f)
+                val ratio = if (w > 0 && h > 0) (w.toFloat() * pixelWidthHeightRatio) / h else 0f
+                frame.setAspectRatio(ratio)
                 view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             }
         }
@@ -353,30 +403,52 @@ class Media3EngineImpl(
     }
 
     override fun setVolume(volume: Float) {
-        player?.volume = volume.coerceIn(0f, 2f)
+        pendingVolume = volume.coerceIn(0f, 2f)
+        player?.volume = pendingVolume
     }
 
     override suspend fun captureFrame(): Bitmap? {
         val surfaceView = playerView?.videoSurfaceView as? SurfaceView ?: return null
+        if (!surfaceView.isAttachedToWindow || surfaceView.holder.surface?.isValid != true) return null
         val width = surfaceView.width
         val height = surfaceView.height
         if (width <= 0 || height <= 0) return null
+
+        val handler = ensureCopyHandler()
         return suspendCancellableCoroutine { continuation ->
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val handler = Handler(Looper.getMainLooper())
-            PixelCopy.request(
-                surfaceView,
-                bitmap,
-                { result ->
-                    if (result == PixelCopy.SUCCESS && continuation.isActive) {
-                        continuation.resume(bitmap)
-                    } else {
-                        bitmap.recycle()
-                        if (continuation.isActive) continuation.resume(null)
-                    }
-                },
-                handler,
-            )
+            val finished = AtomicBoolean(false)
+
+            continuation.invokeOnCancellation {
+                if (finished.compareAndSet(false, true) && !bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
+            }
+
+            try {
+                PixelCopy.request(
+                    surfaceView,
+                    bitmap,
+                    { result ->
+                        if (finished.compareAndSet(false, true)) {
+                            if (result == PixelCopy.SUCCESS && continuation.isActive) {
+                                continuation.resume(bitmap)
+                            } else {
+                                if (!bitmap.isRecycled) bitmap.recycle()
+                                if (continuation.isActive) continuation.resume(null)
+                            }
+                        } else if (!bitmap.isRecycled) {
+                            bitmap.recycle()
+                        }
+                    },
+                    handler,
+                )
+            } catch (_: Throwable) {
+                if (finished.compareAndSet(false, true) && !bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
+                if (continuation.isActive) continuation.resume(null)
+            }
         }
     }
 
@@ -385,7 +457,17 @@ class Media3EngineImpl(
         releasePlayer()
         playerView = null
         aspectFrame = null
+        copyThread?.quitSafely()
+        copyThread = null
+        copyHandler = null
         scope.cancel()
+    }
+
+    private fun ensureCopyHandler(): Handler {
+        copyHandler?.let { return it }
+        val thread = HandlerThread("xplayer-pixelcopy").apply { start() }
+        copyThread = thread
+        return Handler(thread.looper).also { copyHandler = it }
     }
 
     private fun releasePlayer() {
@@ -406,6 +488,7 @@ class Media3EngineImpl(
 
         p.currentTracks.groups.forEachIndexed { groupIndex, group ->
             for (index in 0 until group.length) {
+                if (!group.isTrackSupported(index)) continue
                 val format = group.getTrackFormat(index)
                 val id = format.id ?: "$groupIndex:$index"
                 val selected = group.isTrackSelected(index)
@@ -413,7 +496,8 @@ class Media3EngineImpl(
                     C.TRACK_TYPE_AUDIO -> {
                         audio += TrackInfo(
                             id = id,
-                            label = format.label ?: format.codecs ?: "Audio ${audio.size + 1}",
+                            label = format.label ?: format.codecs
+                                ?: context.getString(R.string.player_track_audio_fallback, audio.size + 1),
                             language = format.language,
                             mimeType = format.sampleMimeType,
                             channels = format.channelCount.takeIf { it > 0 },
@@ -423,12 +507,14 @@ class Media3EngineImpl(
                         if (selected) selectedAudio = id
                     }
                     C.TRACK_TYPE_TEXT -> {
+                        val isExt = id.startsWith(EXT_SUB_PREFIX)
                         subtitles += TrackInfo(
                             id = id,
-                            label = format.label ?: "Subtitle ${subtitles.size + 1}",
+                            label = format.label
+                                ?: context.getString(R.string.player_track_subtitle_fallback, subtitles.size + 1),
                             language = format.language,
                             mimeType = format.sampleMimeType,
-                            isExternal = format.id?.contains("external", ignoreCase = true) == true,
+                            isExternal = isExt,
                             groupIndex = groupIndex,
                             trackIndex = index,
                         )
@@ -440,20 +526,55 @@ class Media3EngineImpl(
         _state.value = _state.value.copy(
             audioTracks = audio,
             subtitleTracks = subtitles,
-            selectedAudioId = selectedAudio ?: _state.value.selectedAudioId,
+            selectedAudioId = selectedAudio,
             selectedSubtitleId = selectedSubtitle,
         )
+    }
+
+    private fun applyPendingTrackSelections(p: Player) {
+        val audioTargetId = pendingSelectAudioId
+        if (audioTargetId != null) {
+            val match = _state.value.audioTracks.firstOrNull { it.id == audioTargetId }
+            pendingSelectAudioId = null
+            if (match != null && _state.value.selectedAudioId != match.id) {
+                selectAudioTrack(match)
+            }
+        }
+
+        val extPath = pendingSelectExternalSubPath
+        if (extPath != null) {
+            val expectedId = "$EXT_SUB_PREFIX$extPath"
+            val match = _state.value.subtitleTracks.firstOrNull { it.id == expectedId }
+            pendingSelectExternalSubPath = null
+            if (match != null) {
+                selectSubtitleTrack(match)
+                pendingSelectSubtitleId = null
+                pendingSelectSubtitleExplicit = false
+                return
+            }
+        }
+
+        if (pendingSelectSubtitleExplicit) {
+            val targetId = pendingSelectSubtitleId
+            pendingSelectSubtitleId = null
+            pendingSelectSubtitleExplicit = false
+            if (targetId == null) {
+                selectSubtitleTrack(null)
+            } else {
+                _state.value.subtitleTracks.firstOrNull { it.id == targetId }?.let { selectSubtitleTrack(it) }
+            }
+        }
     }
 
     private fun startPositionLoop() {
         if (positionJob?.isActive == true) return
         positionJob = scope.launch {
-            while (true) {
+            while (isActive) {
                 player?.let { p ->
-                    val duration = p.duration.coerceAtLeast(0L)
+                    val duration = p.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: _state.value.durationMs
                     _state.value = _state.value.copy(
                         positionMs = p.currentPosition.coerceAtLeast(0L),
-                        durationMs = if (duration > 0) duration else _state.value.durationMs,
+                        durationMs = duration,
                         bufferedMs = p.bufferedPosition.coerceAtLeast(0L),
                         isPlaying = p.isPlaying,
                     )
@@ -469,30 +590,31 @@ class Media3EngineImpl(
     }
 
     private fun applyFrameRate() {
-        if (!frameRateMatching || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         val surfaceView = playerView?.videoSurfaceView as? SurfaceView ?: return
-        val fps = detectFrameRate()
-        if (fps <= 0f) return
+        val surface = surfaceView.holder.surface
+        if (surface == null || !surface.isValid) return
+        val fps = if (frameRateMatching) detectFrameRate() else 0f
         runCatching {
-            surfaceView.holder.surface?.setFrameRate(fps, android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
+            surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
         }
     }
 
     private fun detectFrameRate(): Float {
         val p = player ?: return 0f
         val format = p.videoFormat ?: return 0f
-        return if (format.frameRate > 0) format.frameRate else 0f
+        return if (format.frameRate > 0f) format.frameRate else 0f
     }
 
     private fun languageOf(name: String): String {
-        val parts = name.substringBeforeLast('.').split('.', '_', '-')
-        val candidate = parts.lastOrNull { it.length in 2..3 }?.lowercase(Locale.US) ?: "und"
-        return candidate
+        val parts = name.substringBeforeLast('.').split('.', '_', '-', ' ')
+        return parts.lastOrNull { it.length in 2..3 }?.lowercase(Locale.US) ?: "und"
     }
 
     companion object {
         private const val TAG = "Media3Engine"
         private const val POSITION_INTERVAL_MS = 400L
         private const val USER_AGENT = "XPlayer/1.0 (Android)"
+        private const val EXT_SUB_PREFIX = "xplayer_ext:"
     }
 }

@@ -2,6 +2,8 @@ package com.xplayer.app.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,13 +13,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -25,6 +26,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,11 +43,12 @@ import com.xplayer.app.ui.components.SettingGroup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CodecScreen(onBack: () -> Unit) {
     var report by remember { mutableStateOf<CodecReport?>(null) }
     var loading by remember { mutableStateOf(true) }
-    var reload by remember { mutableStateOf(0) }
+    var reload by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(reload) {
         loading = true
@@ -58,7 +61,7 @@ fun CodecScreen(onBack: () -> Unit) {
         onBack = onBack,
         actionIcon = Icons.Default.Refresh,
         actionDescription = stringResource(R.string.codec_refresh),
-        onAction = { reload++ },
+        onAction = { if (!loading) reload++ },
     ) { padding ->
         if (loading) {
             Column(
@@ -78,17 +81,20 @@ fun CodecScreen(onBack: () -> Unit) {
         val data = report
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 40.dp),
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding(),
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
         ) {
             if (data == null) {
-                item {
+                item(key = "error", contentType = "error") {
                     Text(
                         text = stringResource(R.string.videos_operation_failed),
                         modifier = Modifier.padding(24.dp),
                     )
                 }
             } else {
-                item {
+                item(key = "chip", contentType = "chip") {
                     SettingGroup(title = stringResource(R.string.codec_chip)) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
@@ -103,7 +109,10 @@ fun CodecScreen(onBack: () -> Unit) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Spacer(Modifier.height(8.dp))
-                            TextButton(onClick = { reload++ }) {
+                            TextButton(
+                                onClick = { if (!loading) reload++ },
+                                enabled = !loading,
+                            ) {
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
                                     contentDescription = null,
@@ -116,7 +125,7 @@ fun CodecScreen(onBack: () -> Unit) {
                     }
                 }
 
-                item {
+                item(key = "codecs", contentType = "codecs") {
                     SettingGroup(title = stringResource(R.string.codec_title)) {
                         Column(modifier = Modifier.padding(vertical = 6.dp)) {
                             data.codecs.forEach { codec ->
@@ -172,10 +181,13 @@ fun CodecScreen(onBack: () -> Unit) {
                 }
 
                 if (data.hdrFormats.isNotEmpty() || data.dolbyVisionProfiles.isNotEmpty()) {
-                    item {
+                    item(key = "hdr", contentType = "hdr") {
                         SettingGroup(title = stringResource(R.string.codec_hdr_title)) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
                                     data.hdrFormats.forEach { format ->
                                         MicroBadge(
                                             text = format,
@@ -198,27 +210,39 @@ fun CodecScreen(onBack: () -> Unit) {
                     }
                 }
 
-                item {
+                item(key = "decoders", contentType = "decoders") {
                     SettingGroup(title = stringResource(R.string.codec_decoder)) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = "${data.decoders.size}",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
+                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            if (data.decoders.isEmpty()) {
+                                Text(
+                                    text = stringResource(R.string.codec_hardware_empty),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            } else {
+                                Text(
+                                    text = "${data.decoders.size}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                data.decoders.forEachIndexed { idx, decoder ->
+                                    Text(
+                                        text = decoder,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 4.dp),
+                                    )
+                                    if (idx < data.decoders.lastIndex) {
+                                        HorizontalDivider(
+                                            thickness = 0.5.dp,
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
-                }
-
-                items(data.decoders) { decoder ->
-                    Text(
-                        text = decoder,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 3.dp),
-                    )
                 }
             }
         }

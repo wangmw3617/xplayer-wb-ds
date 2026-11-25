@@ -3,6 +3,9 @@ package com.xplayer.app.data.scanner
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
+import com.xplayer.app.data.scanner.MediaFormatUtils.intOrNull
+import com.xplayer.app.data.scanner.MediaFormatUtils.stringOrNull
+import com.xplayer.app.util.Formatters
 import java.util.Locale
 
 data class TrackDescription(
@@ -11,12 +14,10 @@ data class TrackDescription(
     val language: String?,
     val channels: Int?,
     val sampleRate: Int?,
-    val bitrate: Int?,
     val title: String?,
-    val isDefault: Boolean,
 )
 
-/** 视频信息弹窗用：读取容器内所有音轨 / 字幕轨的参数 */
+/** 视频详情弹窗用：读取容器内所有音轨 / 字幕轨的参数 */
 object TrackInspector {
 
     fun inspect(path: String): List<TrackDescription> {
@@ -26,25 +27,19 @@ object TrackInspector {
             extractor.setDataSource(path)
             for (index in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(index)
-                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                val mime = format.stringOrNull(MediaFormat.KEY_MIME) ?: continue
                 val type = when {
-                    mime.startsWith("video/") -> "video"
-                    mime.startsWith("audio/") -> "audio"
-                    else -> "text"
+                    mime.startsWith("audio/", ignoreCase = true) -> "audio"
+                    MediaFormatUtils.isSubtitleMime(mime) -> "text"
+                    else -> continue
                 }
-                if (type == "video") continue
                 result += TrackDescription(
                     type = type,
                     mime = mime,
-                    language = format.getString(MediaFormat.KEY_LANGUAGE)?.takeIf { it != "und" },
-                    channels = runCatching { format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }.getOrNull(),
-                    sampleRate = runCatching { format.getInteger(MediaFormat.KEY_SAMPLE_RATE) }.getOrNull(),
-                    bitrate = runCatching { format.getInteger(MediaFormat.KEY_BIT_RATE) }.getOrNull(),
-                    title = runCatching { format.getString("title") }.getOrNull()
-                        ?: runCatching { format.getString("track-name") }.getOrNull(),
-                    isDefault = runCatching {
-                        format.getInteger(MediaFormat.KEY_IS_DEFAULT) == 1
-                    }.getOrDefault(false),
+                    language = MediaFormatUtils.trackLanguage(format),
+                    channels = format.intOrNull(MediaFormat.KEY_CHANNEL_COUNT)?.takeIf { it > 0 },
+                    sampleRate = format.intOrNull(MediaFormat.KEY_SAMPLE_RATE)?.takeIf { it > 0 },
+                    title = MediaFormatUtils.trackTitle(format),
                 )
             }
         } catch (error: Throwable) {
@@ -57,18 +52,19 @@ object TrackInspector {
 
     fun describe(track: TrackDescription): String {
         val parts = mutableListOf<String>()
+        track.title?.let { parts += it }
         track.language?.let { parts += it.uppercase(Locale.US) }
         track.channels?.let { channels ->
             parts += when (channels) {
-                1 -> "Mono"
-                2 -> "Stereo"
+                1 -> "1.0"
+                2 -> "2.0"
                 6 -> "5.1"
                 8 -> "7.1"
-                else -> "$channels ch"
+                else -> "${channels}ch"
             }
         }
-        track.sampleRate?.let { parts += "${it / 1000} kHz" }
-        track.mime?.substringAfter('/')?.let { parts += it.uppercase(Locale.US) }
+        track.sampleRate?.let { parts += Formatters.sampleRateLabel(it) }
+        Formatters.codecLabel(track.mime)?.let { parts += it }
         return parts.joinToString(" · ")
     }
 }

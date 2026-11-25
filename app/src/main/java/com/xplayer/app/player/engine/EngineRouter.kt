@@ -7,59 +7,49 @@ import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.MediaSource
 
-enum class EngineReason {
-    POLICY_MEDIA3,
-    ASS_AUTO_MPV,
-    SHADER_MPV,
-    FORCED_MEDIA3,
-    FORCED_MPV,
-    MANUAL,
-    FALLBACK,
-    EXTERNAL_URI,
-}
-
-data class EngineDecision(val engine: EngineType, val reason: EngineReason)
+data class EngineDecision(
+    val engine: EngineType,
+    val assAutoRouted: Boolean = false,
+)
 
 /**
  * Media3 优先智能路由：
- * 1. 强制策略优先；
- * 2. ASS/SSA 自动切 mpv（可关）；
- * 3. 启用 GLSL 着色器或自定义 mpv.conf 时走 mpv；
- * 4. 其余默认 Media3（保障杜比视界 / HDR 硬件直通）。
+ * 1. 不可用或外部 content:// URI 统一走 Media3；
+ * 2. 用户强制策略或单次记忆偏好优先；
+ * 3. 已启用实际 GLSL 着色器或自定义 mpv.conf（非空）时走 libmpv；
+ * 4. 检测到 ASS/SSA 特效字幕且开启自动切核时走 libmpv；
+ * 5. 其余默认 Media3（硬件直通与杜比视界优先）。
  */
-class EngineRouter {
+object EngineRouter {
 
     fun decide(
         settings: AppSettings,
         source: MediaSource,
         hasEmbeddedAss: Boolean,
+        hasActiveShaders: Boolean,
         preferred: EngineType? = null,
     ): EngineDecision {
-        val mpvReady = EngineAvailability.mpvAvailable
-        if (!mpvReady) {
-            return EngineDecision(EngineType.MEDIA3, EngineReason.FALLBACK)
-        }
-        // 外部应用传入的 content:// 只能交给 Media3（mpv 读不了 SAF 文档）
-        if (source is ContentUriSource) {
-            return EngineDecision(EngineType.MEDIA3, EngineReason.EXTERNAL_URI)
+        if (!EngineAvailability.mpvAvailable || source is ContentUriSource) {
+            return EngineDecision(EngineType.MEDIA3)
         }
         if (preferred != null) {
-            return EngineDecision(preferred, EngineReason.MANUAL)
+            return EngineDecision(preferred)
         }
         if (settings.engine.policy == EnginePolicy.MPV_ONLY) {
-            return EngineDecision(EngineType.MPV, EngineReason.FORCED_MPV)
+            return EngineDecision(EngineType.MPV)
         }
         if (settings.engine.policy == EnginePolicy.MEDIA3_ONLY) {
-            return EngineDecision(EngineType.MEDIA3, EngineReason.FORCED_MEDIA3)
+            return EngineDecision(EngineType.MEDIA3)
         }
-        if (settings.engine.shaderPipelineEnabled || settings.engine.customMpvConfEnabled) {
-            return EngineDecision(EngineType.MPV, EngineReason.SHADER_MPV)
+        val hasCustomConf = settings.engine.customMpvConfEnabled && settings.engine.mpvConf.isNotBlank()
+        if (hasActiveShaders || hasCustomConf) {
+            return EngineDecision(EngineType.MPV)
         }
         val hasAss = hasEmbeddedAss ||
             (source is LocalFileSource && source.subtitles.any { SubtitleFinder.isAss(it.path) })
         if (hasAss && settings.engine.assAutoSwitch) {
-            return EngineDecision(EngineType.MPV, EngineReason.ASS_AUTO_MPV)
+            return EngineDecision(EngineType.MPV, assAutoRouted = true)
         }
-        return EngineDecision(EngineType.MEDIA3, EngineReason.POLICY_MEDIA3)
+        return EngineDecision(EngineType.MEDIA3)
     }
 }

@@ -22,11 +22,9 @@ sealed interface MediaSource {
 data class LocalFileSource(
     val path: String,
     override val displayName: String,
-    val durationMs: Long = 0L,
-    val width: Int = 0,
-    val height: Int = 0,
     val subtitles: List<SidecarSubtitle> = emptyList(),
     override val folderPath: String = "",
+    val hasEmbeddedAss: Boolean = false,
 ) : MediaSource {
     override val key: String get() = path
     override val isLocal: Boolean get() = true
@@ -51,7 +49,6 @@ data class NetworkUrlSource(
 data class ContentUriSource(
     val uri: String,
     override val displayName: String,
-    val mimeType: String? = null,
 ) : MediaSource {
     override val key: String get() = uri
     override val isLocal: Boolean get() = true

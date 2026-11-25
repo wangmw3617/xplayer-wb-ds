@@ -13,6 +13,13 @@ android {
         ?.takeIf { it.isNotBlank() }
         ?.let { file(it) }
         ?.takeIf { it.exists() }
+    val releaseStorePassword = System.getenv("XPLAYER_KEYSTORE_PASSWORD")?.takeIf { it.isNotEmpty() }
+    val releaseKeyAlias = System.getenv("XPLAYER_KEY_ALIAS")?.takeIf { it.isNotEmpty() }
+    val releaseKeyPassword = System.getenv("XPLAYER_KEY_PASSWORD")?.takeIf { it.isNotEmpty() }
+    val hasCompleteReleaseSigning = releaseKeystore != null &&
+        releaseStorePassword != null &&
+        releaseKeyAlias != null &&
+        releaseKeyPassword != null
 
     defaultConfig {
         applicationId = "com.xplayer.app"
@@ -20,16 +27,15 @@ android {
         targetSdk = 36
         versionCode = 7
         versionName = "1.4.1"
-        vectorDrawables { useSupportLibrary = true }
     }
 
     signingConfigs {
         create("release") {
-            if (releaseKeystore != null) {
+            if (hasCompleteReleaseSigning) {
                 storeFile = releaseKeystore
-                storePassword = System.getenv("XPLAYER_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("XPLAYER_KEY_ALIAS")
-                keyPassword = System.getenv("XPLAYER_KEY_PASSWORD")
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
@@ -39,11 +45,11 @@ android {
             isMinifyEnabled = false
         }
         release {
-            // V1 阶段关闭混淆，避免 R8 误伤 libmpv / Media3 的反射调用；体积控制交由资源压缩与原生库压缩完成
+            //  volume / ABI 优化由 jniLibs 与 dex 压缩完成；保留完整 proguard 规则以便后续随时开启 R8
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = if (releaseKeystore != null) {
+            signingConfig = if (hasCompleteReleaseSigning) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")

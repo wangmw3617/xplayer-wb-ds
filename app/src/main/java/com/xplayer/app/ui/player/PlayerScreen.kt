@@ -7,10 +7,13 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.view.View
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -37,18 +40,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -57,6 +68,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,7 +83,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -89,6 +104,7 @@ import com.xplayer.app.R
 import com.xplayer.app.data.datastore.AspectMode
 import com.xplayer.app.data.datastore.BackgroundBehavior
 import com.xplayer.app.data.datastore.GestureAction
+import com.xplayer.app.data.datastore.RotationMode
 import com.xplayer.app.data.datastore.SingleTapAction
 import com.xplayer.app.data.datastore.labelRes
 import com.xplayer.app.data.source.ContentUriSource
@@ -96,6 +112,7 @@ import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.NetworkUrlSource
 import com.xplayer.app.data.source.SidecarSubtitle
 import com.xplayer.app.player.ScreenshotSaver
+import com.xplayer.app.player.engine.EngineAvailability
 import com.xplayer.app.player.engine.EngineType
 import com.xplayer.app.player.engine.PlayerUiState
 import com.xplayer.app.player.pip.PipController
@@ -104,11 +121,12 @@ import com.xplayer.app.player.pip.PlayerCommandBus
 import com.xplayer.app.player.service.PlaybackService
 import com.xplayer.app.ui.icons.XPlayerIcons
 import com.xplayer.app.util.Formatters
-import java.io.File
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.io.File
 import kotlin.math.roundToInt
 
 private enum class PlayerSheet { TRACKS, SPEED, ASPECT, SUBTITLE, SETTINGS }
@@ -120,29 +138,36 @@ fun PlayerScreen(
     onOpenMediaInfo: () -> Unit = {},
 ) {
     val engine by viewModel.engine.collectAsState()
-    // 将高频刷新的 positionMs / bufferedMs 剥离出根作用域，仅让进度条区域订阅，避免播放期间整页每 300ms 重组
+    // 剥离高频 positionMs / bufferedMs 避免每 300ms 触发根播放页重组
     val state by remember(viewModel) {
         viewModel.state
             .map { it.copy(positionMs = 0L, bufferedMs = 0L) }
             .distinctUntilChanged()
     }.collectAsState(initial = viewModel.state.value.copy(positionMs = 0L, bufferedMs = 0L))
     val settings by viewModel.settings.collectAsState()
+    val hasPrevious by viewModel.canPrevious.collectAsState()
+    val hasNext by viewModel.canNext.collectAsState()
+
     val context = LocalContext.current
+    val view = LocalView.current
     val activity = remember(context) { context.findActivity() }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val bridgeOwner = remember { Any() }
 
     var controlsVisible by remember { mutableStateOf(true) }
+    var interactionTick by remember { mutableIntStateOf(0) }
+    var isSeeking by remember { mutableStateOf(false) }
+    var lockButtonVisible by remember { mutableStateOf(true) }
+    var inPipMode by remember { mutableStateOf(false) }
     var sheet by remember { mutableStateOf<PlayerSheet?>(null) }
-    var rotationMode by remember { mutableStateOf(0) }
-    var zoomScale by remember { mutableFloatStateOf(1f) }
-    var muted by remember { mutableStateOf(false) }
-    var serviceRunning by remember { mutableStateOf(false) }
-    var orientationApplied by remember { mutableStateOf(false) }
+    var videoBounds by remember { mutableStateOf<Rect?>(null) }
+    var preLongPressSpeed by remember { mutableFloatStateOf(state.speed) }
+    var volumeStepHint by remember { mutableIntStateOf(-1) }
 
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
-    var volume by remember {
+    var volumeLevel by remember {
         mutableFloatStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume)
     }
     var brightness by remember {
@@ -151,21 +176,86 @@ fun PlayerScreen(
         )
     }
 
+    fun bumpControlsTimer() {
+        interactionTick++
+    }
+
+    fun currentLiveVolume(): Float = if (volumeLevel > 1f) {
+        volumeLevel
+    } else {
+        audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume
+    }
+
     fun applyBrightness(value: Float) {
-        brightness = value
+        val clamped = value.coerceIn(0.02f, 1f)
+        if (kotlin.math.abs(clamped - brightness) < 0.005f) return
+        brightness = clamped
         activity?.window?.let { window ->
-            window.attributes = window.attributes.apply { screenBrightness = value.coerceIn(0.01f, 1f) }
+            window.attributes = window.attributes.apply { screenBrightness = clamped }
         }
     }
 
     fun applyVolume(value: Float) {
-        volume = value
+        volumeLevel = value
+        if (value > 0f && viewModel.muted) {
+            viewModel.setMutedState(false)
+        }
         if (value <= 1f) {
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (value * maxVolume).roundToInt(), 0)
+            val targetStep = (value * maxVolume).roundToInt()
+            if (targetStep != volumeStepHint) {
+                volumeStepHint = targetStep
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetStep, 0)
+            }
             viewModel.controller.setVolume(1f)
         } else {
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVolume, 0)
+            if (volumeStepHint != maxVolume) {
+                volumeStepHint = maxVolume
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVolume, 0)
+            }
             viewModel.controller.setVolume(value)
+        }
+    }
+
+    fun stopBackgroundServiceIfRunning() {
+        if (viewModel.backgroundServiceActive) {
+            PlaybackService.liveState.value?.let { bgState ->
+                if (bgState.uri == currentPlaybackUri(viewModel)) {
+                    viewModel.syncFromBackgroundAudio(bgState.positionMs, resumePlaying = false)
+                }
+            }
+            context.stopService(Intent(context, PlaybackService::class.java))
+            PlaybackService.clearLiveState()
+            viewModel.backgroundServiceActive = false
+        }
+    }
+
+    fun togglePlayPauseSafe() {
+        bumpControlsTimer()
+        stopBackgroundServiceIfRunning()
+        viewModel.controller.togglePlayPause()
+    }
+
+    fun enterPipOrWarn() {
+        val ok = activity?.let {
+            PipController.enter(
+                activity = it,
+                videoWidth = state.videoWidth,
+                videoHeight = state.videoHeight,
+                isPlaying = state.isPlaying,
+                autoEnter = settings.playback.backgroundBehavior == BackgroundBehavior.PIP &&
+                    state.isPlaying && !state.ended,
+                sourceBounds = videoBounds,
+            )
+        } ?: false
+        if (!ok) {
+            scope.launch { snackbar.showSnackbar(context.getString(R.string.player_pip_failed)) }
+        }
+    }
+
+    fun startBgAudioAndPause() {
+        startBackgroundAudio(context, viewModel, viewModel.state.value.positionMs)?.let {
+            viewModel.backgroundServiceActive = true
+            viewModel.controller.pause()
         }
     }
 
@@ -185,46 +275,75 @@ fun PlayerScreen(
         }
     }
 
-    // Android 13+ 显示媒体通知卡片需要通知权限
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
-    fun ensureNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+
+    fun canPostNotifications(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
-        ) {
+
+    fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !canPostNotifications()) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
     fun handleAction(action: GestureAction) {
+        bumpControlsTimer()
         when (action) {
             GestureAction.SEEK_BACK -> viewModel.controller.seekBy(-settings.gesture.leftStepMs)
             GestureAction.SEEK_FORWARD -> viewModel.controller.seekBy(settings.gesture.rightStepMs)
-            GestureAction.PLAY_PAUSE -> viewModel.controller.togglePlayPause()
+            GestureAction.PLAY_PAUSE -> togglePlayPauseSafe()
             GestureAction.PREV -> viewModel.controller.previous()
             GestureAction.NEXT -> viewModel.controller.next()
             GestureAction.MUTE -> {
-                muted = !muted
-                viewModel.controller.setVolume(if (muted) 0f else 1f)
+                val nextMuted = !viewModel.muted
+                viewModel.setMutedState(nextMuted)
+                val targetVol = if (nextMuted) 0f else if (volumeLevel > 1f) volumeLevel else 1f
+                viewModel.controller.setVolume(targetVol)
             }
             GestureAction.SCREENSHOT -> takeScreenshot()
             GestureAction.ASPECT_TOGGLE -> {
                 viewModel.setAspect(if (viewModel.aspectMode == AspectMode.FIT) AspectMode.CROP else AspectMode.FIT)
-                zoomScale = 1f
+                viewModel.resetZoom()
             }
             GestureAction.DISABLED -> Unit
         }
     }
 
-    // 沉浸式全屏
+    // 返回键拦截：先关面板或拦截锁屏退出，避免误退播放页
+    BackHandler {
+        when {
+            sheet == PlayerSheet.ASPECT || sheet == PlayerSheet.SUBTITLE -> sheet = PlayerSheet.SETTINGS
+            sheet != null -> sheet = null
+            viewModel.locked -> {
+                lockButtonVisible = true
+                scope.launch { snackbar.showSnackbar(context.getString(R.string.player_unlock_back_hint)) }
+            }
+            else -> onBack()
+        }
+    }
+
+    // 播放页保活亮屏 + 沉浸式全屏 & 浅色系统栏图标（防止浅色主题下滑动唤出状态栏时图标变黑不可见）
+    DisposableEffect(view, state.isPlaying) {
+        view.keepScreenOn = state.isPlaying
+        onDispose { view.keepScreenOn = false }
+    }
+
     DisposableEffect(activity) {
         val window = activity?.window
         val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
         controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.isAppearanceLightStatusBars = false
+        controller?.isAppearanceLightNavigationBars = false
         controller?.hide(WindowInsetsCompat.Type.systemBars())
         onDispose {
+            // 新播放页若已接管（外链切歌场景），不破坏新页的全屏与方向状态
+            if (!PlayerActivityBridge.isCurrentOwner(bridgeOwner) && PlayerActivityBridge.autoPip != null) {
+                return@onDispose
+            }
             controller?.show(WindowInsetsCompat.Type.systemBars())
             window?.attributes = window?.attributes?.apply {
                 screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
@@ -233,7 +352,7 @@ fun PlayerScreen(
         }
     }
 
-    // 通知 / 提示
+    // 提示消息
     LaunchedEffect(Unit) {
         viewModel.notice.collect { notice ->
             val text = notice.arg?.let { context.getString(notice.messageRes, it) }
@@ -242,7 +361,7 @@ fun PlayerScreen(
         }
     }
 
-    // 断点续播提示（附「从头播放」快捷入口）
+    // 断点续播提示
     LaunchedEffect(state.ready) {
         if (state.ready && !viewModel.resumeNotified && viewModel.resumePosition.value > 5_000L) {
             viewModel.markResumeNotified()
@@ -253,35 +372,45 @@ fun PlayerScreen(
                 ),
                 actionLabel = context.getString(R.string.player_play_from_start),
                 withDismissAction = true,
-                duration = androidx.compose.material3.SnackbarDuration.Long,
+                duration = SnackbarDuration.Long,
             )
-            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                viewModel.controller.seekTo(0L)
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.controller.seekTo(0L, persistImmediate = true)
             }
         }
     }
 
-    // 控制栏自动隐藏
-    LaunchedEffect(controlsVisible, state.isPlaying, sheet) {
-        if (controlsVisible && state.isPlaying && !viewModel.locked && sheet == null) {
-            kotlinx.coroutines.delay(4_000)
+    // 控制栏自动隐藏（拖动进度条期间保持常亮）
+    LaunchedEffect(controlsVisible, state.isPlaying, viewModel.locked, sheet, isSeeking, interactionTick) {
+        if (controlsVisible && state.isPlaying && !viewModel.locked && sheet == null && !isSeeking) {
+            delay(4_000L)
             controlsVisible = false
         }
     }
 
-    // 初次按视频比例决定方向
-    LaunchedEffect(state.videoWidth, state.videoHeight) {
-        if (!orientationApplied && state.videoWidth > 0 && state.videoHeight > 0) {
-            orientationApplied = true
-            activity?.requestedOrientation = if (state.videoWidth > state.videoHeight) {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            }
+    // 锁屏提示按钮 3.5 秒后自动淡出
+    LaunchedEffect(viewModel.locked, lockButtonVisible) {
+        if (viewModel.locked && lockButtonVisible) {
+            delay(3_500L)
+            lockButtonVisible = false
         }
     }
 
-    // 后台行为：PiP / 后台音频 / 暂停
+    // 按视频分辨率自动设置横竖屏（同步写入 rotationMode，避免首次旋转需点击两次）
+    LaunchedEffect(state.videoWidth, state.videoHeight) {
+        if (!viewModel.orientationApplied && state.videoWidth > 0 && state.videoHeight > 0) {
+            viewModel.orientationApplied = true
+            val initialMode = if (state.videoWidth > state.videoHeight) {
+                RotationMode.LANDSCAPE
+            } else {
+                RotationMode.PORTRAIT
+            }
+            viewModel.setRotation(initialMode)
+            applyRotation(activity, initialMode)
+        }
+    }
+
+    // 后台行为 + 返回前台状态无缝回传
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestState by rememberUpdatedState(state)
     val latestSettings by rememberUpdatedState(settings)
@@ -289,25 +418,37 @@ fun PlayerScreen(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
-                    val inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-                        activity?.isInPictureInPictureMode == true
+                    val inPip = activity?.isInPictureInPictureMode == true
                     when (latestSettings.playback.backgroundBehavior) {
-                        BackgroundBehavior.PAUSE -> viewModel.controller.pause()
+                        BackgroundBehavior.PAUSE -> if (!inPip) viewModel.controller.pause()
                         BackgroundBehavior.AUDIO -> {
                             if (!inPip && latestState.isPlaying) {
-                                startBackgroundAudio(context, viewModel, viewModel.state.value.positionMs)?.let {
-                                    serviceRunning = true
+                                if (canPostNotifications()) {
+                                    startBgAudioAndPause()
+                                } else {
+                                    // Android 13+ 无通知权限时不强行启动前台服务，改为稳妥暂停
                                     viewModel.controller.pause()
                                 }
                             }
                         }
-                        BackgroundBehavior.PIP -> Unit
+                        BackgroundBehavior.PIP -> {
+                            if (!inPip && latestState.isPlaying) {
+                                viewModel.controller.pause()
+                            }
+                        }
                     }
                 }
                 Lifecycle.Event.ON_START -> {
-                    if (serviceRunning) {
+                    val bgState = PlaybackService.liveState.value
+                    if (viewModel.backgroundServiceActive || bgState != null) {
+                        val sameMedia = bgState?.uri == currentPlaybackUri(viewModel)
                         context.stopService(Intent(context, PlaybackService::class.java))
-                        serviceRunning = false
+                        PlaybackService.clearLiveState()
+                        if (sameMedia && bgState != null) {
+                            viewModel.syncFromBackgroundAudio(bgState.positionMs, resumePlaying = bgState.isPlaying)
+                        } else {
+                            viewModel.backgroundServiceActive = false
+                        }
                     }
                 }
                 else -> Unit
@@ -317,48 +458,79 @@ fun PlayerScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // 按 Home 自动进画中画（后台行为 = PIP 时）
+    // PiP 桥接注册（带 owner token + 退出自动重置 autoEnter）
     DisposableEffect(activity) {
-        PlayerActivityBridge.autoPip = {
-            if (activity?.isInPictureInPictureMode == true) {
-                true
-            } else {
-                val wantPip = latestSettings.playback.backgroundBehavior == BackgroundBehavior.PIP &&
-                    latestState.isPlaying && !latestState.ended
-                if (wantPip && activity != null) {
-                    PipController.enter(
-                        activity = activity,
-                        videoWidth = latestState.videoWidth,
-                        videoHeight = latestState.videoHeight,
-                        isPlaying = true,
-                    )
+        PlayerActivityBridge.register(
+            owner = bridgeOwner,
+            autoPip = {
+                if (activity?.isInPictureInPictureMode == true) {
+                    true
                 } else {
-                    false
+                    val wantPip = latestSettings.playback.backgroundBehavior == BackgroundBehavior.PIP &&
+                        latestState.isPlaying && !latestState.ended
+                    if (wantPip && activity != null) {
+                        PipController.enter(
+                            activity = activity,
+                            videoWidth = latestState.videoWidth,
+                            videoHeight = latestState.videoHeight,
+                            isPlaying = true,
+                            autoEnter = true,
+                            sourceBounds = videoBounds,
+                        )
+                    } else {
+                        false
+                    }
+                }
+            },
+            onPipChanged = { inPip ->
+                inPipMode = inPip
+                controlsVisible = !inPip
+                if (inPip) {
+                    sheet = null
+                } else {
+                    val window = activity?.window
+                    window?.let {
+                        WindowCompat.getInsetsController(it, it.decorView).hide(WindowInsetsCompat.Type.systemBars())
+                    }
+                }
+            },
+        )
+        onDispose {
+            PlayerActivityBridge.unregister(bridgeOwner)
+            activity?.let { act ->
+                if (PlayerActivityBridge.autoPip == null) {
+                    PipController.updateActions(
+                        activity = act,
+                        videoWidth = 0,
+                        videoHeight = 0,
+                        isPlaying = false,
+                        autoEnter = false,
+                    )
                 }
             }
         }
-        PlayerActivityBridge.onPipChanged = { inPip ->
-            controlsVisible = !inPip
-        }
-        onDispose {
-            PlayerActivityBridge.autoPip = null
-            PlayerActivityBridge.onPipChanged = null
-        }
     }
 
-    // 画中画窗口内的遥控按钮
+    // PiP 窗口遥控动作
     LaunchedEffect(Unit) {
         PlayerCommandBus.commands.collect { command ->
             when (command) {
-                PlayerCommand.TOGGLE_PLAY -> viewModel.controller.togglePlayPause()
-                PlayerCommand.REWIND -> viewModel.controller.seekBy(-10_000)
-                PlayerCommand.FORWARD -> viewModel.controller.seekBy(10_000)
+                PlayerCommand.TOGGLE_PLAY -> togglePlayPauseSafe()
+                PlayerCommand.REWIND -> viewModel.controller.seekBy(-10_000L)
+                PlayerCommand.FORWARD -> viewModel.controller.seekBy(10_000L)
             }
         }
     }
 
-    // 让系统提前知道「回桌面要自动进 PiP」，并随播放状态刷新窗口内动作图标
-    LaunchedEffect(state.isPlaying, settings.playback.backgroundBehavior, state.videoWidth, state.videoHeight) {
+    // 同步系统自动进画中画及窗口图标
+    LaunchedEffect(
+        state.isPlaying,
+        state.ended,
+        settings.playback.backgroundBehavior,
+        state.videoWidth,
+        state.videoHeight,
+        videoBounds,
+    ) {
         val act = activity ?: return@LaunchedEffect
         PipController.updateActions(
             activity = act,
@@ -367,6 +539,7 @@ fun PlayerScreen(
             isPlaying = state.isPlaying,
             autoEnter = settings.playback.backgroundBehavior == BackgroundBehavior.PIP &&
                 state.isPlaying && !state.ended,
+            sourceBounds = videoBounds,
         )
     }
 
@@ -377,10 +550,21 @@ fun PlayerScreen(
                     factory = { ctx -> currentEngine.createVideoView(ctx) },
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = zoomScale,
-                            scaleY = zoomScale,
-                        ),
+                        .onGloballyPositioned { coords ->
+                            val b = coords.boundsInWindow()
+                            videoBounds = Rect(
+                                b.left.roundToInt(),
+                                b.top.roundToInt(),
+                                b.right.roundToInt(),
+                                b.bottom.roundToInt(),
+                            )
+                        }
+                        .graphicsLayer {
+                            scaleX = viewModel.zoomScale
+                            scaleY = viewModel.zoomScale
+                            translationX = viewModel.zoomOffset.x
+                            translationY = viewModel.zoomOffset.y
+                        },
                 )
             }
             LaunchedEffect(currentEngine) {
@@ -388,42 +572,50 @@ fun PlayerScreen(
             }
         }
 
-        PlayerGestureOverlay(
-            prefs = settings.gesture,
-            locked = viewModel.locked,
-            positionMsProvider = { viewModel.state.value.positionMs },
-            durationMsProvider = { viewModel.state.value.durationMs },
-            brightness = brightness,
-            volume = volume,
-            onBrightness = ::applyBrightness,
-            onVolume = ::applyVolume,
-            onSeekPreview = { },
-            onSeekCommit = { target -> viewModel.controller.seekTo(target) },
-            onSingleTap = {
-                if (viewModel.locked) {
-                    // 锁屏时单击唤出解锁入口
-                    controlsVisible = true
-                } else if (settings.gesture.singleTapAction == SingleTapAction.PLAY_PAUSE) {
-                    viewModel.controller.togglePlayPause()
-                    controlsVisible = true
-                } else {
-                    controlsVisible = !controlsVisible
-                }
-            },
-            onDoubleTap = ::handleAction,
-            onLongPressSpeed = { speed ->
-                if (speed == null) {
-                    viewModel.controller.setSpeed(settings.playback.defaultSpeed)
-                } else {
-                    viewModel.controller.setSpeed(speed)
-                }
-            },
-            onZoom = { scale, _ -> zoomScale = scale },
-        )
+        if (!inPipMode) {
+            PlayerGestureOverlay(
+                prefs = settings.gesture,
+                locked = viewModel.locked,
+                zoomScale = viewModel.zoomScale,
+                zoomPan = viewModel.zoomOffset,
+                positionMsProvider = { viewModel.state.value.positionMs },
+                durationMsProvider = { viewModel.state.value.durationMs },
+                brightnessProvider = { brightness },
+                volumeProvider = ::currentLiveVolume,
+                onBrightness = ::applyBrightness,
+                onVolume = ::applyVolume,
+                onSeekCommit = { target ->
+                    bumpControlsTimer()
+                    viewModel.controller.seekTo(target)
+                },
+                onSingleTap = {
+                    if (viewModel.locked) {
+                        lockButtonVisible = !lockButtonVisible
+                    } else if (settings.gesture.singleTapAction == SingleTapAction.PLAY_PAUSE) {
+                        togglePlayPauseSafe()
+                        controlsVisible = true
+                    } else {
+                        controlsVisible = !controlsVisible
+                        if (controlsVisible) bumpControlsTimer()
+                    }
+                },
+                onDoubleTap = ::handleAction,
+                onLongPressStart = { targetSpeed ->
+                    preLongPressSpeed = state.speed
+                    viewModel.controller.setSpeed(targetSpeed)
+                },
+                onLongPressSpeed = { speed -> viewModel.controller.setSpeed(speed) },
+                onLongPressEnd = { viewModel.controller.setSpeed(preLongPressSpeed) },
+                onZoom = { scale, offset -> viewModel.updateZoom(scale, offset) },
+                onAspectPinchToggle = { crop ->
+                    viewModel.setAspect(if (crop) AspectMode.CROP else AspectMode.FIT)
+                    viewModel.resetZoom()
+                },
+            )
+        }
 
-        // 顶部 / 中央 / 底部控制层（布局参考 YouTube 安卓端，进度条与侧边面板借鉴哔哩哔哩）
         AnimatedVisibility(
-            visible = controlsVisible && !viewModel.locked && sheet == null,
+            visible = controlsVisible && !viewModel.locked && !inPipMode && sheet == null && state.error == null,
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
@@ -442,45 +634,80 @@ fun PlayerScreen(
                 )
 
                 PlayerTopBar(
-                    title = viewModel.controller.currentSource()?.displayName ?: "",
+                    title = viewModel.activeTitle,
                     onBack = onBack,
                     onRotate = {
-                        rotationMode = (rotationMode + 1) % 3
-                        applyRotation(activity, rotationMode)
-                    },
-                    onPip = {
-                        val ok = activity?.let {
-                            PipController.enter(it, state.videoWidth, state.videoHeight, state.isPlaying)
-                        } ?: false
-                        if (!ok) {
-                            scope.launch {
-                                snackbar.showSnackbar(context.getString(R.string.player_pip_failed))
-                            }
+                        bumpControlsTimer()
+                        val entries = RotationMode.entries
+                        val next = entries[(entries.indexOf(viewModel.rotationMode) + 1) % entries.size]
+                        viewModel.setRotation(next)
+                        applyRotation(activity, next)
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                context.getString(R.string.player_rotate_mode, context.getString(next.labelRes())),
+                            )
                         }
                     },
+                    onPip = { enterPipOrWarn() },
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
 
-                PlayerCenterControls(
-                    isPlaying = state.isPlaying,
-                    onRewind = { viewModel.controller.seekBy(-10_000) },
-                    onForward = { viewModel.controller.seekBy(10_000) },
-                    onTogglePlay = viewModel.controller::togglePlayPause,
-                    modifier = Modifier.align(Alignment.Center),
-                )
+                if (state.ended && !state.isPlaying) {
+                    PlayerEndedOverlay(
+                        hasNext = hasNext,
+                        onReplay = {
+                            bumpControlsTimer()
+                            viewModel.controller.seekTo(0L, persistImmediate = true)
+                            togglePlayPauseSafe()
+                        },
+                        onNext = {
+                            bumpControlsTimer()
+                            viewModel.controller.next()
+                        },
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                } else {
+                    PlayerCenterControls(
+                        isPlaying = state.isPlaying,
+                        onRewind = {
+                            bumpControlsTimer()
+                            viewModel.controller.seekBy(-10_000L)
+                        },
+                        onForward = {
+                            bumpControlsTimer()
+                            viewModel.controller.seekBy(10_000L)
+                        },
+                        onTogglePlay = ::togglePlayPauseSafe,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
 
                 PlayerBottomBar(
                     progressState = viewModel.state,
                     speed = state.speed,
-                    hasPrevious = viewModel.controller.hasPrevious,
-                    hasNext = viewModel.controller.hasNext,
-                    onSeekCommit = { viewModel.controller.seekTo(it) },
+                    hasPrevious = hasPrevious,
+                    hasNext = hasNext,
+                    onDraggingChanged = { active ->
+                        isSeeking = active
+                        if (!active) bumpControlsTimer()
+                    },
+                    onSeekCommit = {
+                        bumpControlsTimer()
+                        viewModel.controller.seekTo(it)
+                    },
                     onSpeed = { sheet = PlayerSheet.SPEED },
                     onTracks = { sheet = PlayerSheet.TRACKS },
-                    onPrevious = viewModel.controller::previous,
-                    onNext = viewModel.controller::next,
+                    onPrevious = {
+                        bumpControlsTimer()
+                        viewModel.controller.previous()
+                    },
+                    onNext = {
+                        bumpControlsTimer()
+                        viewModel.controller.next()
+                    },
                     onLock = {
                         viewModel.toggleLock()
+                        lockButtonVisible = true
                         controlsVisible = false
                     },
                     onSettings = { sheet = PlayerSheet.SETTINGS },
@@ -489,13 +716,37 @@ fun PlayerScreen(
             }
         }
 
-        // 锁屏状态：只显示一个淡入的解锁按钮（避开屏幕边缘与挖孔区）
-        if (viewModel.locked) {
+        // 错误恢复浮层（当双内核兜底仍失败或外链无法读取时提供重试与切核）
+        state.error?.let { errorCode ->
+            if (!inPipMode) {
+                PlayerErrorOverlay(
+                    message = errorCode,
+                    canSwitchEngine = EngineAvailability.mpvAvailable &&
+                        viewModel.controller.currentSource() !is ContentUriSource,
+                    currentEngine = state.engine,
+                    onRetry = { viewModel.controller.retry() },
+                    onSwitchEngine = {
+                        val alt = if (state.engine == EngineType.MEDIA3) EngineType.MPV else EngineType.MEDIA3
+                        viewModel.switchEngine(alt)
+                    },
+                    onBack = onBack,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+        }
+
+        // 锁屏按钮：随点击显隐并在 3.5 秒无操作后淡出
+        AnimatedVisibility(
+            visible = viewModel.locked && lockButtonVisible && !inPipMode,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .displayCutoutPadding()
+                .padding(start = 24.dp),
+        ) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .displayCutoutPadding()
-                    .padding(start = 24.dp)
                     .size(46.dp)
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.55f))
@@ -512,8 +763,7 @@ fun PlayerScreen(
             }
         }
 
-        // 缓冲指示
-        if (state.isBuffering && !state.ended) {
+        if (state.isBuffering && !state.ended && state.error == null) {
             LinearProgressIndicator(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -524,14 +774,16 @@ fun PlayerScreen(
             )
         }
 
-        SnackbarHost(
-            hostState = snackbar,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .displayCutoutPadding()
-                .navigationBarsPadding()
-                .padding(bottom = 104.dp),
-        )
+        if (!inPipMode) {
+            SnackbarHost(
+                hostState = snackbar,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .displayCutoutPadding()
+                    .navigationBarsPadding()
+                    .padding(bottom = 104.dp),
+            )
+        }
 
         when (sheet) {
             PlayerSheet.TRACKS -> TracksSheet(
@@ -545,6 +797,9 @@ fun PlayerScreen(
                 onSelectSubtitle = { viewModel.controller.selectSubtitle(it) },
                 onDelayChange = { viewModel.controller.setSubtitleDelay(it) },
                 onImportSubtitle = { sub: SidecarSubtitle -> viewModel.controller.addExternalSubtitle(sub) },
+                onImportFailed = {
+                    scope.launch { snackbar.showSnackbar(context.getString(R.string.player_subtitle_import_failed)) }
+                },
                 onDismiss = { sheet = null },
             )
             PlayerSheet.SPEED -> SpeedSheet(
@@ -554,7 +809,10 @@ fun PlayerScreen(
             )
             PlayerSheet.ASPECT -> AspectSheet(
                 current = viewModel.aspectMode,
-                onSelect = { viewModel.setAspect(it) },
+                onSelect = {
+                    viewModel.setAspect(it)
+                    viewModel.resetZoom()
+                },
                 onDismiss = { sheet = null },
             )
             PlayerSheet.SUBTITLE -> SubtitleStyleSheet(
@@ -564,10 +822,10 @@ fun PlayerScreen(
             )
             PlayerSheet.SETTINGS -> PlayerSettingsSheet(
                 engine = state.engine,
-                mpvAvailable = com.xplayer.app.player.engine.EngineAvailability.mpvAvailable,
-                mpvBlockedByUri = viewModel.sourceKind == "uri",
+                mpvAvailable = EngineAvailability.mpvAvailable,
+                mpvBlockedByUri = viewModel.controller.currentSource() is ContentUriSource,
                 aspectLabel = stringResource(viewModel.aspectMode.labelRes()),
-                rotationMode = rotationMode,
+                rotationMode = viewModel.rotationMode,
                 onSwitchEngine = { target ->
                     sheet = null
                     if (target != state.engine) viewModel.switchEngine(target)
@@ -581,27 +839,17 @@ fun PlayerScreen(
                 onBackgroundAudio = {
                     sheet = null
                     ensureNotificationPermission()
-                    if (startBackgroundAudio(context, viewModel, viewModel.state.value.positionMs) != null) {
-                        serviceRunning = true
-                        viewModel.controller.pause()
-                        scope.launch {
-                            snackbar.showSnackbar(context.getString(R.string.player_background_started))
-                        }
+                    startBgAudioAndPause()
+                    scope.launch {
+                        snackbar.showSnackbar(context.getString(R.string.player_background_started))
                     }
                 },
                 onPip = {
                     sheet = null
-                    val ok = activity?.let {
-                        PipController.enter(it, state.videoWidth, state.videoHeight, state.isPlaying)
-                    } ?: false
-                    if (!ok) {
-                        scope.launch {
-                            snackbar.showSnackbar(context.getString(R.string.player_pip_failed))
-                        }
-                    }
+                    enterPipOrWarn()
                 },
                 onRotate = { mode ->
-                    rotationMode = mode
+                    viewModel.setRotation(mode)
                     applyRotation(activity, mode)
                 },
                 onMediaInfo = {
@@ -611,11 +859,137 @@ fun PlayerScreen(
                 onLock = {
                     sheet = null
                     viewModel.toggleLock()
+                    lockButtonVisible = true
                     controlsVisible = false
                 },
                 onDismiss = { sheet = null },
             )
             null -> Unit
+        }
+    }
+}
+
+@Composable
+private fun PlayerErrorOverlay(
+    message: String,
+    canSwitchEngine: Boolean,
+    currentEngine: EngineType,
+    onRetry: () -> Unit,
+    onSwitchEngine: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .padding(24.dp)
+            .widthIn(max = 360.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xDD14161E),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(32.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = stringResource(R.string.player_error),
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.7f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onBack) {
+                    Text(stringResource(R.string.common_back), color = Color.White)
+                }
+                Button(onClick = onRetry) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.common_retry))
+                }
+            }
+            if (canSwitchEngine) {
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.TextButton(onClick = onSwitchEngine) {
+                    val altName = if (currentEngine == EngineType.MEDIA3) "libmpv" else "Media3"
+                    Text(
+                        text = "${stringResource(R.string.player_switch_engine)} → $altName",
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerEndedOverlay(
+    hasNext: Boolean,
+    onReplay: () -> Unit,
+    onNext: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            modifier = Modifier
+                .clip(CircleShape)
+                .clickable(onClick = onReplay),
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.68f),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.player_replay), color = Color.White, fontWeight = FontWeight.Medium)
+            }
+        }
+        if (hasNext) {
+            Surface(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(onClick = onNext),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = XPlayerIcons.SkipNext,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        stringResource(R.string.player_next),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
         }
     }
 }
@@ -663,7 +1037,6 @@ private fun PlayerTopBar(
     }
 }
 
-/** 中央三键：后退 10s / 播放暂停 / 前进 10s，主按钮用主题强调色 */
 @Composable
 private fun PlayerCenterControls(
     isPlaying: Boolean,
@@ -739,6 +1112,7 @@ private fun PlayerBottomBar(
     speed: Float,
     hasPrevious: Boolean,
     hasNext: Boolean,
+    onDraggingChanged: (Boolean) -> Unit,
     onSeekCommit: (Long) -> Unit,
     onSpeed: () -> Unit,
     onTracks: () -> Unit,
@@ -757,6 +1131,7 @@ private fun PlayerBottomBar(
     ) {
         PlayerProgressSection(
             stateFlow = progressState,
+            onDraggingChanged = onDraggingChanged,
             onSeekCommit = onSeekCommit,
         )
         Spacer(Modifier.height(4.dp))
@@ -783,7 +1158,7 @@ private fun PlayerBottomBar(
                     .padding(horizontal = 10.dp, vertical = 4.dp),
             ) {
                 Text(
-                    text = "${Formatters.speed(speed)}×",
+                    text = stringResource(R.string.settings_speed_x, Formatters.speed(speed)),
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
@@ -820,6 +1195,7 @@ private fun PlayerBottomBar(
 @Composable
 private fun PlayerProgressSection(
     stateFlow: StateFlow<PlayerUiState>,
+    onDraggingChanged: (Boolean) -> Unit,
     onSeekCommit: (Long) -> Unit,
 ) {
     val state by stateFlow.collectAsState()
@@ -827,9 +1203,13 @@ private fun PlayerProgressSection(
     var dragValue by remember { mutableFloatStateOf(0f) }
     var showRemaining by remember { mutableStateOf(false) }
 
-    val duration = state.durationMs.coerceAtLeast(1L)
+    val duration = state.durationMs
+    val seekable = duration > 0L
+    val safeDuration = duration.coerceAtLeast(1L)
     val position = if (dragging) dragValue.toLong() else state.positionMs
-    val durationText = remember(state.durationMs) { Formatters.duration(state.durationMs) }
+    val positionSec = position / 1000L
+    val posText = remember(positionSec) { Formatters.duration(position) }
+    val durationText = remember(duration) { Formatters.duration(duration) }
 
     if (dragging) {
         Box(
@@ -846,7 +1226,7 @@ private fun PlayerProgressSection(
                     .padding(horizontal = 14.dp, vertical = 5.dp),
             ) {
                 Text(
-                    text = "${Formatters.duration(position)} / $durationText",
+                    text = "$posText / $durationText",
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -859,34 +1239,48 @@ private fun PlayerProgressSection(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = Formatters.duration(position),
+            text = posText,
             color = Color.White.copy(alpha = 0.92f),
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
         )
         BilibiliSeekBar(
-            positionMs = position,
-            bufferedMs = state.bufferedMs,
-            durationMs = duration,
+            enabled = seekable,
+            positionFractionProvider = { (position.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f) },
+            bufferedFractionProvider = { (state.bufferedMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f) },
+            durationFloat = safeDuration.toFloat(),
             dragging = dragging,
             onSeekPreview = {
-                dragging = true
+                if (!dragging) {
+                    dragging = true
+                    onDraggingChanged(true)
+                }
                 dragValue = it
             },
             onSeekCommit = {
                 dragging = false
+                onDraggingChanged(false)
                 onSeekCommit(it.toLong())
+            },
+            onSeekCancel = {
+                if (dragging) {
+                    dragging = false
+                    onDraggingChanged(false)
+                }
             },
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 10.dp),
         )
-        Text(
-            text = if (showRemaining) {
-                "-" + Formatters.duration((state.durationMs - position).coerceAtLeast(0))
+        val remainingText = remember(showRemaining, positionSec, duration) {
+            if (showRemaining) {
+                "-" + Formatters.duration((duration - position).coerceAtLeast(0L))
             } else {
                 durationText
-            },
+            }
+        }
+        Text(
+            text = remainingText,
             color = Color.White.copy(alpha = 0.85f),
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
@@ -899,24 +1293,27 @@ private fun PlayerProgressSection(
     }
 }
 
-/** 哔哩哔哩风格纤细进度条：细圆轨 + 缓冲条 + 主题色已播轨 + 紧凑白点游标（拖动加粗） */
+/** 哔哩哔哩风格纤细进度条：细圆轨 + 缓冲条 + 主题色已播轨 + 紧凑白点游标（触控对齐绘制区且在 Canvas 阶段读取进度） */
 @Composable
 private fun BilibiliSeekBar(
-    positionMs: Long,
-    bufferedMs: Long,
-    durationMs: Long,
+    enabled: Boolean,
+    positionFractionProvider: () -> Float,
+    bufferedFractionProvider: () -> Float,
+    durationFloat: Float,
     dragging: Boolean,
     onSeekPreview: (Float) -> Unit,
     onSeekCommit: (Float) -> Unit,
+    onSeekCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val activeColor = MaterialTheme.colorScheme.primary
-    val total = durationMs.coerceAtLeast(1L).toFloat()
-    val fraction = (positionMs.toFloat() / total).coerceIn(0f, 1f)
-    val bufferedFraction = (bufferedMs.toFloat() / total).coerceIn(0f, 1f)
-    val latestTotal by rememberUpdatedState(total)
+    val latestTotal by rememberUpdatedState(durationFloat)
+    val latestEnabled by rememberUpdatedState(enabled)
     val latestOnPreview by rememberUpdatedState(onSeekPreview)
     val latestOnCommit by rememberUpdatedState(onSeekCommit)
+    val latestOnCancel by rememberUpdatedState(onSeekCancel)
+    val latestPosFraction by rememberUpdatedState(positionFractionProvider)
+    val latestBufFraction by rememberUpdatedState(bufferedFractionProvider)
 
     Box(
         modifier = modifier
@@ -924,23 +1321,37 @@ private fun BilibiliSeekBar(
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    val w = size.width.coerceAtLeast(1).toFloat()
-                    var currentTarget = ((down.position.x / w).coerceIn(0f, 1f)) * latestTotal
+                    if (!latestEnabled) return@awaitEachGesture
+                    val thumbMarginPx = 5.5.dp.toPx()
+                    val usableWidth = (size.width - thumbMarginPx * 2f).coerceAtLeast(1f)
+                    fun targetAt(x: Float): Float =
+                        (((x - thumbMarginPx) / usableWidth).coerceIn(0f, 1f)) * latestTotal
+
+                    var currentTarget = targetAt(down.position.x)
+                    var completed = false
                     latestOnPreview(currentTarget)
                     down.consume()
 
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) {
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) {
+                                change.consume()
+                                completed = true
+                                break
+                            }
+                            currentTarget = targetAt(change.position.x)
+                            latestOnPreview(currentTarget)
                             change.consume()
-                            break
                         }
-                        currentTarget = ((change.position.x / w).coerceIn(0f, 1f)) * latestTotal
-                        latestOnPreview(currentTarget)
-                        change.consume()
+                    } finally {
+                        if (completed) {
+                            latestOnCommit(currentTarget)
+                        } else {
+                            latestOnCancel()
+                        }
                     }
-                    latestOnCommit(currentTarget)
                 }
             },
         contentAlignment = Alignment.Center,
@@ -956,10 +1367,11 @@ private fun BilibiliSeekBar(
             val usableWidth = (size.width - thumbRadius * 2f).coerceAtLeast(1f)
             val startX = thumbRadius
             val endX = startX + usableWidth
+            val fraction = latestPosFraction()
+            val bufferedFraction = latestBufFraction()
             val playedX = startX + usableWidth * fraction
             val bufferedX = startX + usableWidth * bufferedFraction
 
-            // 底层未播轨道
             drawLine(
                 color = Color.White.copy(alpha = 0.28f),
                 start = Offset(startX, y),
@@ -967,7 +1379,6 @@ private fun BilibiliSeekBar(
                 strokeWidth = trackHeight,
                 cap = StrokeCap.Round,
             )
-            // 缓冲进度
             if (bufferedX > playedX) {
                 drawLine(
                     color = Color.White.copy(alpha = 0.50f),
@@ -977,7 +1388,6 @@ private fun BilibiliSeekBar(
                     cap = StrokeCap.Round,
                 )
             }
-            // 已播进度
             drawLine(
                 color = activeColor,
                 start = Offset(startX, y),
@@ -985,24 +1395,25 @@ private fun BilibiliSeekBar(
                 strokeWidth = trackHeight,
                 cap = StrokeCap.Round,
             )
-            // 拖动光晕 + 白色圆点游标
-            if (dragging) {
+            if (enabled) {
+                if (dragging) {
+                    drawCircle(
+                        color = activeColor.copy(alpha = 0.35f),
+                        radius = thumbRadius + 4.dp.toPx(),
+                        center = Offset(playedX, y),
+                    )
+                }
                 drawCircle(
-                    color = activeColor.copy(alpha = 0.35f),
-                    radius = thumbRadius + 4.dp.toPx(),
+                    color = Color.White,
+                    radius = thumbRadius,
+                    center = Offset(playedX, y),
+                )
+                drawCircle(
+                    color = activeColor,
+                    radius = thumbRadius * 0.36f,
                     center = Offset(playedX, y),
                 )
             }
-            drawCircle(
-                color = Color.White,
-                radius = thumbRadius,
-                center = Offset(playedX, y),
-            )
-            drawCircle(
-                color = activeColor,
-                radius = thumbRadius * 0.36f,
-                center = Offset(playedX, y),
-            )
         }
     }
 }
@@ -1027,11 +1438,20 @@ private fun OverlayIconButton(
     )
 }
 
-private fun applyRotation(activity: Activity?, mode: Int) {
+private fun applyRotation(activity: Activity?, mode: RotationMode) {
     activity?.requestedOrientation = when (mode) {
-        1 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        2 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        RotationMode.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        RotationMode.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        RotationMode.AUTO -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    }
+}
+
+private fun currentPlaybackUri(viewModel: PlayerViewModel): String? {
+    val source = viewModel.controller.currentSource() ?: return null
+    return when (source) {
+        is LocalFileSource -> Uri.fromFile(File(source.path)).toString()
+        is ContentUriSource -> source.uri
+        is NetworkUrlSource -> source.url
     }
 }
 
@@ -1041,12 +1461,16 @@ private fun startBackgroundAudio(
     positionMs: Long,
 ): Intent? {
     val source = viewModel.controller.currentSource() ?: return null
-    val uri = when (source) {
-        is LocalFileSource -> Uri.fromFile(File(source.path)).toString()
-        is ContentUriSource -> source.uri
-        is NetworkUrlSource -> source.url
-    }
-    val intent = PlaybackService.startIntent(context, uri, source.displayName, positionMs)
+    val uri = currentPlaybackUri(viewModel) ?: return null
+    val speed = viewModel.state.value.speed
+    val intent = PlaybackService.startIntent(
+        context = context,
+        uri = uri,
+        title = source.displayName,
+        positionMs = positionMs,
+        speed = speed,
+        headersJson = viewModel.activeHeadersJson,
+    )
     return runCatching {
         ContextCompat.startForegroundService(context, intent)
         intent

@@ -2,6 +2,7 @@ package com.xplayer.app.data.source
 
 import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
@@ -11,6 +12,12 @@ import android.util.Log
 import com.xplayer.app.data.scanner.SubtitleFinder
 import java.io.File
 import java.util.Locale
+
+data class ContentFileMeta(
+    val displayName: String,
+    val sizeBytes: Long = -1L,
+    val modifiedAt: Long = 0L,
+)
 
 /**
  * 把外部应用传来的 Uri 归一化成播放源。
@@ -22,6 +29,7 @@ import java.util.Locale
 object MediaUriResolver {
 
     private const val TAG = "MediaUriResolver"
+    private const val SEC_TO_MS_THRESHOLD = 100_000_000_000L
 
     fun resolve(context: Context, uri: Uri): MediaSource? {
         return runCatching { resolveInternal(context, uri) }
@@ -30,22 +38,27 @@ object MediaUriResolver {
     }
 
     private fun resolveInternal(context: Context, uri: Uri): MediaSource? {
-        val name = displayName(context, uri)
         return when (uri.scheme?.lowercase(Locale.US)) {
             "file" -> {
                 val path = uri.path ?: return null
-                localSource(path) ?: ContentUriSource(uri.toString(), name, mimeOf(context, uri))
+                localSource(path) ?: ContentUriSource(uri.toString(), fallbackName(uri))
             }
 
             "content" -> {
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                }
                 val path = contentToPath(context, uri)
                 val local = path?.let { localSource(it) }
-                local ?: ContentUriSource(uri.toString(), name, mimeOf(context, uri))
+                local ?: ContentUriSource(uri.toString(), displayName(context, uri))
             }
 
-            "http", "https" -> NetworkUrlSource(
+            "http", "https", "rtsp", "rtmp" -> NetworkUrlSource(
                 url = uri.toString(),
-                displayName = name.ifBlank { uri.lastPathSegment ?: uri.toString() },
+                displayName = fallbackName(uri),
             )
 
             else -> null
@@ -53,17 +66,56 @@ object MediaUriResolver {
     }
 
     private fun localSource(path: String): LocalFileSource? {
-        val file = File(path)
-        if (!file.isFile || !file.canRead()) return null
+        val raw = File(path)
+        if (!raw.isFile || !raw.canRead()) return null
+        val canonicalPath = runCatching { raw.canonicalPath }.getOrDefault(raw.absolutePath)
+        val canonicalFolder = runCatching { raw.parentFile?.canonicalPath }.getOrNull() ?: raw.parent.orEmpty()
         return LocalFileSource(
-            path = file.absolutePath,
-            displayName = file.nameWithoutExtension.ifBlank { file.name },
-            subtitles = SubtitleFinder.find(file.absolutePath),
-            folderPath = file.parent ?: "",
+            path = canonicalPath,
+            displayName = raw.nameWithoutExtension.ifBlank { raw.name },
+            subtitles = SubtitleFinder.find(canonicalPath),
+            folderPath = canonicalFolder,
+        )
+    }
+
+    fun queryContentMeta(context: Context, uri: Uri): ContentFileMeta {
+        var displayName: String? = null
+        var size = -1L
+        var modified = 0L
+        runCatching {
+            val projection = arrayOf(
+                OpenableColumns.DISPLAY_NAME,
+                OpenableColumns.SIZE,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+                "last_modified",
+            )
+            context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use
+                val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIdx >= 0 && !cursor.isNull(nameIdx)) displayName = cursor.getString(nameIdx)
+                val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIdx >= 0 && !cursor.isNull(sizeIdx)) size = cursor.getLong(sizeIdx)
+                val dateModIdx = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+                val lastModIdx = cursor.getColumnIndex("last_modified")
+                val rawTime = when {
+                    dateModIdx >= 0 && !cursor.isNull(dateModIdx) -> cursor.getLong(dateModIdx)
+                    lastModIdx >= 0 && !cursor.isNull(lastModIdx) -> cursor.getLong(lastModIdx)
+                    else -> 0L
+                }
+                if (rawTime > 0L) {
+                    modified = if (rawTime < SEC_TO_MS_THRESHOLD) rawTime * 1000L else rawTime
+                }
+            }
+        }
+        return ContentFileMeta(
+            displayName = displayName?.takeIf { it.isNotBlank() } ?: fallbackName(uri),
+            sizeBytes = size,
+            modifiedAt = modified,
         )
     }
 
     fun displayName(context: Context, uri: Uri): String {
+        if (!uri.scheme.equals("content", ignoreCase = true)) return fallbackName(uri)
         val queried = runCatching {
             context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
                 ?.use { cursor ->
@@ -71,89 +123,63 @@ object MediaUriResolver {
                     if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
                 }
         }.getOrNull()
-        return queried?.takeIf { it.isNotBlank() }
-            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
-            ?: "media"
+        return queried?.takeIf { it.isNotBlank() } ?: fallbackName(uri)
     }
 
-    fun mimeOf(context: Context, uri: Uri): String? =
-        runCatching { context.contentResolver.getType(uri) }.getOrNull()
-
-    fun sizeOf(context: Context, uri: Uri): Long {
-        val size = runCatching {
-            context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
-                ?.use { cursor ->
-                    val index = cursor.getColumnIndex(OpenableColumns.SIZE)
-                    if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
-                        cursor.getLong(index)
-                    } else {
-                        -1L
-                    }
-                }
-        }.getOrNull()
-        return size ?: -1L
-    }
+    private fun fallbackName(uri: Uri): String =
+        uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: uri.toString().substringAfterLast('/').ifBlank { "media" }
 
     /**
-     * content:// 的修改时间。MediaStore 系给的是秒，DocumentsProvider 给的是毫秒，
-     * 这里按数值大小判断单位，取不到就是 0（信息页隐藏该行）。
-     */
-    fun modifiedOf(context: Context, uri: Uri): Long {
-        fun read(column: String): Long = runCatching {
-            context.contentResolver.query(uri, arrayOf(column), null, null, null)?.use { cursor ->
-                val index = cursor.getColumnIndex(column)
-                if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
-                    cursor.getLong(index)
-                } else {
-                    0L
-                }
-            }
-        }.getOrNull() ?: 0L
-
-        val seconds = read(MediaStore.MediaColumns.DATE_MODIFIED)
-        if (seconds > 0) return seconds * 1000L
-        val millis = read("last_modified")
-        if (millis > 0) return if (millis < 100_000_000_000L) millis * 1000L else millis
-        return 0L
-    }
-
-    /**
-     * content:// → 真实路径。只覆盖最常见的三类来源，
+     * content:// → 真实路径。只覆盖可验证 authority 的几类来源，
      * 失败返回 null，由调用方退化成 ContentUriSource。
      */
     private fun contentToPath(context: Context, uri: Uri): String? {
         // 1) 能直接查到 _data 的（MediaStore 等）
         queryDataColumn(context, uri)?.let { return it }
 
-        val docId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
+        if (!DocumentsContract.isDocumentUri(context, uri)) return null
+        val docId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: return null
 
-        // 2) 外部存储 documents provider：primary:Movies/a.mkv / 1A2B-3C4D:Movies/a.mkv
-        if (uri.authority == EXTERNAL_STORAGE_AUTHORITY && docId != null) {
+        // 2) 外部存储 documents provider：primary:Movies/a.mkv / home:Movies/a.mkv / <vol>:...
+        if (uri.authority == EXTERNAL_STORAGE_AUTHORITY) {
             val parts = docId.split(':', limit = 2)
             if (parts.size == 2) {
                 val volume = parts[0]
                 val relative = parts[1]
-                val root = if (volume.equals("primary", ignoreCase = true)) {
-                    @Suppress("DEPRECATION")
-                    Environment.getExternalStorageDirectory()
-                } else {
-                    File("/storage/$volume")
+                @Suppress("DEPRECATION")
+                val primaryRoot = Environment.getExternalStorageDirectory()
+                val candidate = when {
+                    volume.equals("primary", ignoreCase = true) -> File(primaryRoot, relative)
+                    volume.equals("home", ignoreCase = true) -> File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+                        relative,
+                    )
+                    else -> File("/storage/$volume", relative)
                 }
-                val candidate = File(root, relative)
-                if (candidate.isFile && candidate.canRead()) return candidate.absolutePath
+                if (candidate.isFile && candidate.canRead()) return candidate.canonicalPath
             }
         }
 
         // 3) 下载 provider：raw:/storage/... 或 msf:123
-        if (uri.authority == DOWNLOADS_AUTHORITY && docId != null) {
+        if (uri.authority == DOWNLOADS_AUTHORITY) {
             if (docId.startsWith("raw:", ignoreCase = true)) {
                 val raw = docId.substringAfter("raw:")
-                if (File(raw).isFile && File(raw).canRead()) return raw
+                val file = File(raw)
+                if (file.isFile && file.canRead()) return file.canonicalPath
+            } else if (docId.startsWith("msf:", ignoreCase = true) &&
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+            ) {
+                val id = docId.substringAfter(':').toLongOrNull()
+                if (id != null) {
+                    val downloadUri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
+                    queryDataColumn(context, downloadUri)?.let { return it }
+                }
             }
         }
 
-        // 4) 媒体库 documents provider：video:123 / audio:123
-        if (docId != null && docId.contains(':')) {
+        // 4) 媒体库 documents provider：仅校验过 authority 后映射 video:123 / audio:123
+        if (uri.authority == MEDIA_DOCUMENTS_AUTHORITY && docId.contains(':')) {
             val type = docId.substringBefore(':')
             val id = docId.substringAfter(':').toLongOrNull()
             val collection = when (type) {
@@ -170,8 +196,10 @@ object MediaUriResolver {
 
     private fun queryDataColumn(context: Context, uri: Uri): String? {
         val path = runCatching {
+            @Suppress("DEPRECATION")
             context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DATA), null, null, null)
                 ?.use { cursor ->
+                    @Suppress("DEPRECATION")
                     val index = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
                     if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
                 }
@@ -181,4 +209,5 @@ object MediaUriResolver {
 
     private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
     private const val DOWNLOADS_AUTHORITY = "com.android.providers.downloads.documents"
+    private const val MEDIA_DOCUMENTS_AUTHORITY = "com.android.providers.media.documents"
 }

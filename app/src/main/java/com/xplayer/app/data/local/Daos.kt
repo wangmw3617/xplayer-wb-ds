@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 data class VideoThumbRef(
@@ -20,14 +21,14 @@ interface VideoDao {
     @Query("SELECT * FROM videos WHERE path = :path LIMIT 1")
     suspend fun findByPath(path: String): VideoEntity?
 
-    @Query("SELECT path FROM videos")
-    suspend fun allPaths(): List<String>
-
     @Query("SELECT path, thumbnailPath FROM videos")
     suspend fun allThumbRefs(): List<VideoThumbRef>
 
-    @Query("SELECT path, thumbnailPath FROM videos WHERE folderPath = :folder")
-    suspend fun folderThumbRefs(folder: String): List<VideoThumbRef>
+    @Query(
+        "SELECT path, thumbnailPath FROM videos " +
+            "WHERE folderPath = :folder OR folderPath LIKE :folderPrefix ESCAPE '\\'",
+    )
+    suspend fun folderTreeThumbRefs(folder: String, folderPrefix: String): List<VideoThumbRef>
 
     @Query("SELECT thumbnailPath FROM videos WHERE thumbnailPath IS NOT NULL")
     suspend fun allThumbnailPaths(): List<String>
@@ -39,9 +40,6 @@ interface VideoDao {
     fun observeCount(): Flow<Int>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(video: VideoEntity): Long
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(videos: List<VideoEntity>)
 
     @Query("DELETE FROM videos WHERE path = :path")
@@ -50,14 +48,14 @@ interface VideoDao {
     @Query("DELETE FROM videos WHERE path IN (:paths)")
     suspend fun deleteByPaths(paths: List<String>)
 
-    @Query("DELETE FROM videos WHERE folderPath = :folder")
-    suspend fun deleteByFolder(folder: String)
+    @Query("DELETE FROM videos WHERE folderPath = :folder OR folderPath LIKE :folderPrefix ESCAPE '\\'")
+    suspend fun deleteByFolderTree(folder: String, folderPrefix: String)
 
-    @Query("DELETE FROM videos")
-    suspend fun clear()
-
-    @Query("UPDATE videos SET title = :title, path = :newPath WHERE path = :oldPath")
-    suspend fun rename(oldPath: String, newPath: String, title: String)
+    @Query(
+        "UPDATE videos SET title = :title, path = :newPath, folderPath = :newFolderPath " +
+            "WHERE path = :oldPath",
+    )
+    suspend fun rename(oldPath: String, newPath: String, title: String, newFolderPath: String)
 
     @Query("SELECT * FROM videos WHERE folderPath = :folder ORDER BY title ASC")
     suspend fun videosInFolder(folder: String): List<VideoEntity>
@@ -72,17 +70,14 @@ interface PlaybackHistoryDao {
     @Query("SELECT * FROM playback_history WHERE mediaId = :mediaId AND sourceType = :type LIMIT 1")
     suspend fun find(mediaId: String, type: SourceType): PlaybackHistoryEntity?
 
-    @Query("SELECT * FROM playback_history WHERE mediaId = :mediaId LIMIT 1")
-    suspend fun findByMediaId(mediaId: String): PlaybackHistoryEntity?
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entry: PlaybackHistoryEntity): Long
 
-    @Query("DELETE FROM playback_history WHERE mediaId = :mediaId")
-    suspend fun delete(mediaId: String)
+    @Query("DELETE FROM playback_history WHERE mediaId = :mediaId AND sourceType = :type")
+    suspend fun delete(mediaId: String, type: SourceType)
 
-    @Query("DELETE FROM playback_history WHERE mediaId IN (:mediaIds)")
-    suspend fun deleteByMediaIds(mediaIds: List<String>)
+    @Query("DELETE FROM playback_history WHERE sourceType = :type AND mediaId IN (:mediaIds)")
+    suspend fun deleteByMediaIds(type: SourceType, mediaIds: List<String>)
 
     @Query("DELETE FROM playback_history")
     suspend fun clear()
@@ -116,11 +111,11 @@ interface StreamUrlDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: StreamUrlEntity): Long
 
-    @Query("UPDATE stream_urls SET lastPlayedAt = :time WHERE url = :url")
-    suspend fun touch(url: String, time: Long)
-
     @Query("DELETE FROM stream_urls WHERE id = :id")
     suspend fun delete(id: Long)
+
+    @Query("DELETE FROM stream_urls")
+    suspend fun clear()
 
     @Query("SELECT * FROM stream_urls WHERE url = :url LIMIT 1")
     suspend fun findByUrl(url: String): StreamUrlEntity?
@@ -140,6 +135,12 @@ interface MpvShaderDao {
 
     @Query("UPDATE mpv_shaders SET orderIndex = :order WHERE id = :id")
     suspend fun setOrder(id: Long, order: Int)
+
+    @Transaction
+    suspend fun swapOrder(firstId: Long, firstOrder: Int, secondId: Long, secondOrder: Int) {
+        setOrder(firstId, firstOrder)
+        setOrder(secondId, secondOrder)
+    }
 
     @Query("DELETE FROM mpv_shaders WHERE id = :id")
     suspend fun delete(id: Long)

@@ -2,6 +2,7 @@ package com.xplayer.app.ui.home
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,13 +22,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,6 +53,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -59,19 +63,24 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.xplayer.app.R
 import com.xplayer.app.data.local.PlaybackHistoryEntity
-import com.xplayer.app.data.local.VideoEntity
+import com.xplayer.app.data.local.StreamUrlEntity
+import com.xplayer.app.data.repository.StreamRepository
 import com.xplayer.app.ui.common.rememberAppVM
+import com.xplayer.app.ui.components.ChevronTrailing
 import com.xplayer.app.ui.components.MicroBadge
 import com.xplayer.app.ui.components.Thumbnail
+import com.xplayer.app.ui.icons.XPlayerIcons
+import com.xplayer.app.ui.navigation.bottomBarListPadding
+import com.xplayer.app.ui.permission.PermissionBanner
 import com.xplayer.app.util.Formatters
+
+private val STREAM_URL_REGEX = Regex("^(https?|rtsps?|rtmp|mms|udp|rtp)://\\S+$", RegexOption.IGNORE_CASE)
 
 @Composable
 fun HomeScreen(
-    onPlayVideo: (VideoEntity, Long) -> Unit,
     onResumeHistory: (PlaybackHistoryEntity) -> Unit,
     onPlayNetwork: (url: String, title: String?) -> Unit,
     onOpenCodec: () -> Unit,
-    onOpenVideos: () -> Unit,
     onOpenSettings: () -> Unit,
     permissionGranted: Boolean,
     onRequestPermission: () -> Unit,
@@ -84,29 +93,37 @@ fun HomeScreen(
     val continueWatching by viewModel.continueWatching.collectAsState()
     val recent by viewModel.recent.collectAsState()
 
+    var pendingRemoveHistory by remember { mutableStateOf<PlaybackHistoryEntity?>(null) }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(bottom = 110.dp),
+        contentPadding = bottomBarListPadding(),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item {
+        item(key = "header", contentType = "header") {
             HomeHeader(
                 videoCount = videoCount,
                 scanning = scanState.scanning,
+                scanned = scanState.scanned,
+                permissionGranted = permissionGranted,
                 onScan = viewModel::scan,
+                onRequestPermission = onRequestPermission,
             )
         }
 
         if (!permissionGranted) {
-            item {
-                PermissionNotice(onRequestPermission)
+            item(key = "permission", contentType = "permission") {
+                PermissionBanner(
+                    onRequest = onRequestPermission,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
             }
         }
 
         continueWatching?.let { entry ->
-            item {
+            item(key = "continue", contentType = "continue") {
                 SectionTitle(stringResource(R.string.home_continue))
                 Spacer(Modifier.height(8.dp))
                 ContinueWatchingCard(
@@ -118,27 +135,31 @@ fun HomeScreen(
         }
 
         if (recent.isNotEmpty()) {
-            item {
+            item(key = "recent_header", contentType = "sectionTitle") {
                 SectionTitle(stringResource(R.string.home_recent))
             }
-            item {
+            item(key = "recent_list", contentType = "recentList") {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 20.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(recent, key = { it.id }) { entry ->
+                    items(
+                        items = recent,
+                        key = { "${it.sourceType.name}:${it.id}" },
+                        contentType = { "recentCard" },
+                    ) { entry ->
                         RecentCard(
                             entry = entry,
                             thumbnail = entry.thumbnailPath ?: recentThumbnails[entry.mediaId],
                             onClick = { onResumeHistory(entry) },
-                            onRemove = { viewModel.removeHistory(entry.mediaId) },
+                            onRemove = { pendingRemoveHistory = entry },
                         )
                     }
                 }
             }
         }
 
-        item {
+        item(key = "network", contentType = "network") {
             SectionTitle(stringResource(R.string.home_network))
             Spacer(Modifier.height(8.dp))
             NetworkCard(
@@ -147,16 +168,19 @@ fun HomeScreen(
                     viewModel.rememberStream(url, title)
                     onPlayNetwork(url, title)
                 },
+                onSaveStream = { url, title, rawHeaders ->
+                    viewModel.rememberStream(url, title, rawHeaders, overwriteMeta = true)
+                },
                 onDelete = viewModel::removeStream,
             )
         }
 
-        item {
+        item(key = "codec", contentType = "codec") {
             CodecPanelCard(onClick = onOpenCodec)
         }
 
         if (videoCount == 0 && !scanState.scanning) {
-            item {
+            item(key = "empty", contentType = "empty") {
                 EmptyLibraryCard(
                     permissionGranted = permissionGranted,
                     onScan = viewModel::scan,
@@ -165,12 +189,39 @@ fun HomeScreen(
                 )
             }
         }
-        item { Spacer(Modifier.height(8.dp)) }
+    }
+
+    pendingRemoveHistory?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoveHistory = null },
+            title = { Text(stringResource(R.string.home_remove_record)) },
+            text = { Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.removeHistory(entry)
+                        pendingRemoveHistory = null
+                    },
+                ) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemoveHistory = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
     }
 }
 
 @Composable
-private fun HomeHeader(videoCount: Int, scanning: Boolean, onScan: () -> Unit) {
+private fun HomeHeader(
+    videoCount: Int,
+    scanning: Boolean,
+    scanned: Int,
+    permissionGranted: Boolean,
+    onScan: () -> Unit,
+    onRequestPermission: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -186,8 +237,11 @@ private fun HomeHeader(videoCount: Int, scanning: Boolean, onScan: () -> Unit) {
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                text = if (scanning) stringResource(R.string.settings_scanning, 0) else
-                    stringResource(R.string.home_video_count, videoCount),
+                text = if (scanning) {
+                    stringResource(R.string.settings_scanning, scanned)
+                } else {
+                    stringResource(R.string.home_video_count, videoCount)
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -196,7 +250,10 @@ private fun HomeHeader(videoCount: Int, scanning: Boolean, onScan: () -> Unit) {
             CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(12.dp))
         }
-        IconButton(onClick = onScan, enabled = !scanning) {
+        IconButton(
+            onClick = if (permissionGranted) onScan else onRequestPermission,
+            enabled = !scanning,
+        ) {
             Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.home_scan))
         }
     }
@@ -211,43 +268,6 @@ private fun SectionTitle(text: String) {
         color = MaterialTheme.colorScheme.onBackground,
         modifier = Modifier.padding(horizontal = 20.dp),
     )
-}
-
-@Composable
-private fun PermissionNotice(onRequest: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.errorContainer,
-        shape = RoundedCornerShape(18.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.perm_denied_title),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = stringResource(R.string.perm_denied_desc),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-            )
-            TextButton(onClick = onRequest) {
-                Text(stringResource(R.string.perm_open_settings))
-            }
-        }
-    }
 }
 
 @Composable
@@ -270,7 +290,7 @@ private fun ContinueWatchingCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f),
-                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                contentScale = ContentScale.Crop,
             )
             Box(
                 modifier = Modifier
@@ -289,7 +309,7 @@ private fun ContinueWatchingCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     MicroBadge(
                         text = entry.preferredEngine ?: "Media3",
-                        container = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                        container = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
@@ -386,12 +406,28 @@ private fun RecentCard(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NetworkCard(
-    streams: List<com.xplayer.app.data.local.StreamUrlEntity>,
+    streams: List<StreamUrlEntity>,
     onPlay: (String, String?) -> Unit,
+    onSaveStream: (url: String, title: String?, rawHeaders: String) -> Unit,
     onDelete: (Long) -> Unit,
 ) {
+    val focusManager = LocalFocusManager.current
     var url by rememberSaveable { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
+    var editingStream by remember { mutableStateOf<StreamUrlEntity?>(null) }
+    var editorVisible by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<StreamUrlEntity?>(null) }
+
+    val submitQuickUrl: () -> Unit = {
+        val trimmed = url.trim()
+        if (STREAM_URL_REGEX.matches(trimmed)) {
+            focusManager.clearFocus()
+            onPlay(trimmed, null)
+            url = ""
+        } else {
+            error = true
+        }
+    }
 
     Card(
         modifier = Modifier
@@ -421,18 +457,11 @@ private fun NetworkCard(
                     keyboardType = KeyboardType.Uri,
                     imeAction = ImeAction.Go,
                 ),
+                keyboardActions = KeyboardActions(onGo = { submitQuickUrl() }),
                 trailingIcon = {
-                    IconButton(onClick = {
-                        val trimmed = url.trim()
-                        if (trimmed.startsWith("http", ignoreCase = true) || trimmed.startsWith("rtsp")) {
-                            onPlay(trimmed, null)
-                            url = ""
-                        } else {
-                            error = true
-                        }
-                    }) {
+                    IconButton(onClick = submitQuickUrl) {
                         Icon(
-                            imageVector = com.xplayer.app.ui.icons.XPlayerIcons.Video,
+                            imageVector = XPlayerIcons.Video,
                             contentDescription = stringResource(R.string.home_network_play),
                             tint = MaterialTheme.colorScheme.primary,
                         )
@@ -457,13 +486,16 @@ private fun NetworkCard(
                             .clip(RoundedCornerShape(12.dp))
                             .combinedClickable(
                                 onClick = { onPlay(stream.url, stream.customTitle) },
-                                onLongClick = { onDelete(stream.id) },
+                                onLongClick = {
+                                    editingStream = stream
+                                    editorVisible = true
+                                },
                             )
                             .padding(vertical = 8.dp, horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            imageVector = com.xplayer.app.ui.icons.XPlayerIcons.Video,
+                            imageVector = XPlayerIcons.Video,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(18.dp),
@@ -484,10 +516,10 @@ private fun NetworkCard(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        IconButton(onClick = { onDelete(stream.id) }, modifier = Modifier.size(28.dp)) {
+                        IconButton(onClick = { pendingDelete = stream }, modifier = Modifier.size(28.dp)) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = null,
+                                contentDescription = stringResource(R.string.common_delete),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -497,22 +529,142 @@ private fun NetworkCard(
             }
 
             Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable {
+                        editingStream = null
+                        editorVisible = true
+                    }
+                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Icon(
                     imageVector = Icons.Default.Add,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = stringResource(R.string.home_network_more),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
     }
+
+    if (editorVisible) {
+        StreamEditorDialog(
+            initial = editingStream,
+            onDismiss = {
+                editorVisible = false
+                editingStream = null
+            },
+            onSave = { savedUrl, savedTitle, rawHeaders ->
+                onSaveStream(savedUrl, savedTitle, rawHeaders)
+                editorVisible = false
+                editingStream = null
+            },
+        )
+    }
+
+    pendingDelete?.let { stream ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(stringResource(R.string.common_delete)) },
+            text = { Text(stringResource(R.string.home_network_delete_confirm, stream.customTitle ?: stream.url)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDelete(stream.id)
+                        pendingDelete = null
+                    },
+                ) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun StreamEditorDialog(
+    initial: StreamUrlEntity?,
+    onDismiss: () -> Unit,
+    onSave: (url: String, title: String?, rawHeaders: String) -> Unit,
+) {
+    var urlInput by remember(initial) { mutableStateOf(initial?.url.orEmpty()) }
+    var titleInput by remember(initial) { mutableStateOf(initial?.customTitle.orEmpty()) }
+    var headersInput by remember(initial) {
+        mutableStateOf(StreamRepository.formatHeadersText(initial?.headersJson))
+    }
+    var urlError by remember(initial) { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.home_network_add)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = urlInput,
+                    onValueChange = {
+                        urlInput = it
+                        urlError = false
+                    },
+                    label = { Text(stringResource(R.string.network_url)) },
+                    placeholder = { Text(stringResource(R.string.home_network_hint)) },
+                    isError = urlError,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                )
+                if (urlError) {
+                    Text(
+                        text = stringResource(R.string.home_network_invalid),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                OutlinedTextField(
+                    value = titleInput,
+                    onValueChange = { titleInput = it },
+                    label = { Text(stringResource(R.string.network_name)) },
+                    placeholder = { Text(stringResource(R.string.network_name_hint)) },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = headersInput,
+                    onValueChange = { headersInput = it },
+                    label = { Text(stringResource(R.string.network_headers)) },
+                    placeholder = { Text(stringResource(R.string.network_headers_hint)) },
+                    minLines = 2,
+                    maxLines = 4,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val trimmed = urlInput.trim()
+                    if (!STREAM_URL_REGEX.matches(trimmed)) {
+                        urlError = true
+                    } else {
+                        onSave(trimmed, titleInput.trim().takeIf { it.isNotEmpty() }, headersInput)
+                    }
+                },
+            ) { Text(stringResource(R.string.common_save)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.common_cancel))
+            }
+        },
+    )
 }
 
 @Composable
@@ -537,7 +689,7 @@ private fun CodecPanelCard(onClick: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = com.xplayer.app.ui.icons.XPlayerIcons.Memory,
+                    imageVector = XPlayerIcons.Memory,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier.size(22.dp),
@@ -555,12 +707,7 @@ private fun CodecPanelCard(onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Icon(
-                imageVector = Icons.Default.Refresh,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
+            ChevronTrailing()
         }
     }
 }
@@ -584,7 +731,7 @@ private fun EmptyLibraryCard(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Icon(
-                imageVector = com.xplayer.app.ui.icons.XPlayerIcons.Folder,
+                imageVector = XPlayerIcons.Folder,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(40.dp),
@@ -602,11 +749,11 @@ private fun EmptyLibraryCard(
             )
             Spacer(Modifier.height(14.dp))
             if (permissionGranted) {
-                androidx.compose.material3.Button(onClick = onScan) {
+                Button(onClick = onScan) {
                     Text(stringResource(R.string.home_scan))
                 }
             } else {
-                androidx.compose.material3.Button(onClick = onRequestPermission) {
+                Button(onClick = onRequestPermission) {
                     Text(stringResource(R.string.perm_grant))
                 }
             }

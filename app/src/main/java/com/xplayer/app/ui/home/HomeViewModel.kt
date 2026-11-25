@@ -3,9 +3,10 @@ package com.xplayer.app.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xplayer.app.AppContainer
-import com.xplayer.app.data.datastore.AppSettings
 import com.xplayer.app.data.local.PlaybackHistoryEntity
 import com.xplayer.app.data.local.StreamUrlEntity
+import com.xplayer.app.data.repository.PlaybackRepository
+import com.xplayer.app.data.repository.StreamRepository
 import com.xplayer.app.data.scanner.ScanState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
@@ -26,19 +27,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     val streams: StateFlow<List<StreamUrlEntity>> = container.streamRepository.items
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val settings: StateFlow<AppSettings> = container.settingsRepository.settings
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
-
     val scanState: StateFlow<ScanState> = container.mediaScanner.state
 
-    /** 继续观看：最近一条未看完且进度 > 1% 的记录 */
+    /** 继续观看：最近一条未看完且进度 > 1s 的记录 */
     val continueWatching: StateFlow<PlaybackHistoryEntity?> =
         history.map { list ->
             list.firstOrNull { entry ->
                 !entry.completed &&
                     entry.durationMs > 0 &&
                     entry.lastPositionMs > 1_000 &&
-                    entry.lastPositionMs < entry.durationMs * 0.95f
+                    entry.lastPositionMs < entry.durationMs * PlaybackRepository.COMPLETION_THRESHOLD
             }
         }
             .flowOn(Dispatchers.Default)
@@ -75,18 +73,31 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     fun scan() {
-        viewModelScope.launch { container.mediaScanner.scan() }
+        container.mediaScanner.triggerScan()
     }
 
-    fun removeHistory(mediaId: String) {
-        viewModelScope.launch { container.playbackRepository.remove(mediaId) }
+    fun removeHistory(entry: PlaybackHistoryEntity) {
+        viewModelScope.launch { container.playbackRepository.remove(entry.mediaId, entry.sourceType) }
     }
 
     fun removeStream(id: Long) {
         viewModelScope.launch { container.streamRepository.delete(id) }
     }
 
-    fun rememberStream(url: String, title: String?) {
-        viewModelScope.launch { container.streamRepository.remember(url, title, null) }
+    fun rememberStream(
+        url: String,
+        title: String?,
+        rawHeaders: String? = null,
+        overwriteMeta: Boolean = false,
+    ) {
+        val headersJson = rawHeaders?.let { StreamRepository.encodeHeadersText(it) }
+        viewModelScope.launch {
+            container.streamRepository.remember(
+                url = url,
+                title = title,
+                headersJson = headersJson,
+                overwriteMeta = overwriteMeta,
+            )
+        }
     }
 }

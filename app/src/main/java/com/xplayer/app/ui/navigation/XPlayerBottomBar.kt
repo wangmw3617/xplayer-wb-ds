@@ -1,19 +1,25 @@
 package com.xplayer.app.ui.navigation
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,8 +45,11 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.xplayer.app.R
+import com.xplayer.app.data.datastore.AnimationLevel
 import com.xplayer.app.data.datastore.BottomBarStyle
 import com.xplayer.app.ui.components.FrostedGlassSurface
 import com.xplayer.app.ui.components.LocalAppBackdropState
@@ -60,6 +69,26 @@ private val tabs = listOf(
     TabItem(Routes.FOLDERS, R.string.nav_folders, XPlayerIcons.Folder),
     TabItem(Routes.SETTINGS, R.string.nav_settings, Icons.Default.Settings),
 )
+
+/** 主 Tab 滚动列表底部留白（自动叠加上系统三键/手势导航栏高度） */
+@Composable
+fun bottomBarListPadding(
+    horizontal: Dp = 0.dp,
+    top: Dp = 0.dp,
+    extraBottom: Dp = 96.dp,
+): PaddingValues = PaddingValues(
+    start = horizontal,
+    end = horizontal,
+    top = top,
+    bottom = extraBottom + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+)
+
+/** 避免 Snackbar 等底部浮层被底栏遮挡 */
+fun Modifier.aboveBottomBar(): Modifier =
+    this.navigationBarsPadding().padding(bottom = 86.dp)
+
+private fun <T> tabAnimSpec(level: AnimationLevel, baseMs: Int = 220): AnimationSpec<T> =
+    if (level == AnimationLevel.OFF) snap() else tween(level.scaleDuration(baseMs))
 
 /**
  * 底部导航栏：支持 FlClash 液态玻璃悬浮胶囊、实色悬浮胶囊与经典贴边底栏三种样式。
@@ -143,15 +172,13 @@ private fun FloatingPillContainer(
 ) {
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(
-                width = 1.dp,
-                color = if (isDark) Color.White.copy(alpha = 0.08f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                shape = CircleShape,
-            ),
+        modifier = Modifier.fillMaxWidth(),
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.96f),
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (isDark) Color.White.copy(alpha = 0.08f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        ),
         shadowElevation = 8.dp,
     ) {
         FloatingTabRow(currentRoute = currentRoute, onSelect = onSelect)
@@ -165,7 +192,6 @@ private fun FloatingTabRow(
     onSelect: (String) -> Unit,
 ) {
     val animLevel = LocalAnimationLevel.current
-    val animDuration = animLevel.scaleDuration(220)
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val pillBg = MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.20f else 0.11f)
 
@@ -180,7 +206,7 @@ private fun FloatingTabRow(
             val interaction = remember { MutableInteractionSource() }
             val containerColor by animateColorAsState(
                 targetValue = if (selected) pillBg else Color.Transparent,
-                animationSpec = tween(animDuration),
+                animationSpec = tabAnimSpec(animLevel),
                 label = "tabPillColor",
             )
             val contentColor by animateColorAsState(
@@ -189,7 +215,7 @@ private fun FloatingTabRow(
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
-                animationSpec = tween(animDuration),
+                animationSpec = tabAnimSpec(animLevel),
                 label = "tabContentColor",
             )
 
@@ -216,6 +242,8 @@ private fun FloatingTabRow(
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                     color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
@@ -230,20 +258,20 @@ private fun ClassicTabBarItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val animDuration = LocalAnimationLevel.current.scaleDuration(220)
+    val animLevel = LocalAnimationLevel.current
     val pillWidth by animateDpAsState(
         targetValue = if (selected) 56.dp else 0.dp,
-        animationSpec = tween(animDuration),
+        animationSpec = tabAnimSpec(animLevel),
         label = "pillWidth",
     )
     val iconAlpha by animateFloatAsState(
         targetValue = if (selected) 1f else 0.62f,
-        animationSpec = tween(animDuration),
+        animationSpec = tabAnimSpec(animLevel),
         label = "iconAlpha",
     )
     val labelAlpha by animateFloatAsState(
         targetValue = if (selected) 1f else 0.6f,
-        animationSpec = tween(animDuration),
+        animationSpec = tabAnimSpec(animLevel),
         label = "labelAlpha",
     )
     val interaction = remember { MutableInteractionSource() }
@@ -286,6 +314,8 @@ private fun ClassicTabBarItem(
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = labelAlpha)
             },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 2.dp),
         )
     }

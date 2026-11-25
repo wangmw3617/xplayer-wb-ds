@@ -4,6 +4,8 @@ import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -26,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,8 +62,7 @@ import java.io.File
 import java.util.Locale
 
 /**
- * 媒体信息页：把容器、视频轨、音频轨、字幕轨的真实参数摊开给用户看。
- * 本地文件与外部「打开方式」传入的 content:// 都支持，纯音频文件同样适用。
+ * 媒体信息页：在后台线程完成 Uri/目录/MediaExtractor 解析，展示容器、视频轨、音频轨与字幕轨真实参数。
  */
 @Composable
 fun MediaInfoScreen(
@@ -70,12 +73,14 @@ fun MediaInfoScreen(
     onPlay: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    var info by remember(sourceType, key) { mutableStateOf<MediaInfo?>(null) }
-    var failed by remember(sourceType, key) { mutableStateOf(false) }
+    var retryTick by remember { mutableIntStateOf(0) }
+    var info by remember(sourceType, key, retryTick) { mutableStateOf<MediaInfo?>(null) }
+    var failed by remember(sourceType, key, retryTick) { mutableStateOf(false) }
 
-    LaunchedEffect(sourceType, key) {
-        val source = buildSource(context, sourceType, key, title)
+    LaunchedEffect(sourceType, key, retryTick) {
+        failed = false
         val result = withContext(Dispatchers.IO) {
+            val source = buildSource(context, sourceType, key, title)
             runCatching { MediaInfoProbe.probe(context, source) }.getOrNull()
         }
         if (result == null) failed = true else info = result
@@ -93,11 +98,19 @@ fun MediaInfoScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = stringResource(R.string.info_failed),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = stringResource(R.string.info_failed),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Button(onClick = { retryTick++ }) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.common_retry))
+                    }
+                }
             }
 
             current == null -> Box(
@@ -126,6 +139,7 @@ fun MediaInfoScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MediaInfoContent(
     info: MediaInfo,
@@ -149,7 +163,10 @@ private fun MediaInfoContent(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     info.container?.let { MicroBadge(it, MaterialTheme.colorScheme.primary) }
                     info.videoTracks.firstOrNull()?.let { track ->
                         val label = Formatters.resolutionLabel(track.width ?: 0, track.height ?: 0)
@@ -168,34 +185,42 @@ private fun MediaInfoContent(
         }
 
         item {
-            SettingGroup(title = stringResource(R.string.info_group_file)) {
-                InfoRow(stringResource(R.string.info_file_name), info.displayName)
-                InfoRow(
-                    stringResource(R.string.info_file_location),
-                    if (info.isContentUri) readableUri(info.location) else info.location,
-                    wrap = true,
+            val fileRows = buildList {
+                add(Triple(stringResource(R.string.info_file_name), info.displayName, false))
+                add(
+                    Triple(
+                        stringResource(R.string.info_file_location),
+                        if (info.isContentUri) readableUri(info.location) else info.location,
+                        true,
+                    ),
                 )
                 if (info.sizeBytes > 0) {
-                    InfoRow(stringResource(R.string.info_file_size), Formatters.size(info.sizeBytes))
+                    add(Triple(stringResource(R.string.info_file_size), Formatters.size(info.sizeBytes), false))
                 }
                 if (info.modifiedAt > 0) {
-                    InfoRow(stringResource(R.string.info_file_modified), Formatters.dateTime(info.modifiedAt), showDivider = false)
+                    add(Triple(stringResource(R.string.info_file_modified), Formatters.dateTime(info.modifiedAt), false))
+                }
+            }
+            SettingGroup(title = stringResource(R.string.info_group_file)) {
+                fileRows.forEachIndexed { index, (label, value, wrap) ->
+                    InfoRow(label, value, wrap = wrap, showDivider = index != fileRows.lastIndex)
                 }
             }
         }
 
         item {
-            SettingGroup(title = stringResource(R.string.info_group_container)) {
-                InfoRow(stringResource(R.string.info_container), info.container ?: "-")
-                InfoRow(stringResource(R.string.info_duration), Formatters.duration(info.durationMs))
+            val containerRows = buildList {
+                add(stringResource(R.string.info_container) to (info.container ?: "-"))
+                add(stringResource(R.string.info_duration) to Formatters.duration(info.durationMs))
                 if (info.overallBitrate > 0) {
-                    InfoRow(stringResource(R.string.info_bitrate), bitrate(info.overallBitrate))
+                    add(stringResource(R.string.info_bitrate) to bitrate(info.overallBitrate))
                 }
-                InfoRow(
-                    stringResource(R.string.info_track_count),
-                    "${info.tracks.size}",
-                    showDivider = false,
-                )
+                add(stringResource(R.string.info_track_count) to "${info.tracks.size}")
+            }
+            SettingGroup(title = stringResource(R.string.info_group_container)) {
+                containerRows.forEachIndexed { index, (label, value) ->
+                    InfoRow(label, value, showDivider = index != containerRows.lastIndex)
+                }
             }
         }
 
@@ -246,7 +271,7 @@ private fun MediaInfoContent(
                     info.sidecarSubtitles.forEachIndexed { index, subtitle ->
                         InfoRow(
                             title = subtitle.name,
-                            value = subtitle.path.substringBeforeLast('/').substringAfterLast('/'),
+                            value = File(subtitle.path).parentFile?.name.orEmpty(),
                             showDivider = index != info.sidecarSubtitles.lastIndex,
                         )
                     }
@@ -254,7 +279,11 @@ private fun MediaInfoContent(
             }
         }
 
-        if (info.tracks.isEmpty() && info.location.startsWith("http")) {
+        val lowerLocation = info.location.lowercase(Locale.US)
+        if (info.tracks.isEmpty() &&
+            (lowerLocation.startsWith("http://") || lowerLocation.startsWith("https://") ||
+                lowerLocation.startsWith("rtsp://") || lowerLocation.startsWith("rtmp://"))
+        ) {
             item {
                 Text(
                     text = stringResource(R.string.info_network_note),
@@ -293,13 +322,15 @@ private fun TrackGroup(
     track: MediaTrackInfo,
     rows: List<Pair<String, String?>>,
 ) {
-    val visible = rows.filter { !it.second.isNullOrBlank() }
-    SettingGroup(title = title) {
-        if (track.isDefault) {
-            InfoRow(stringResource(R.string.info_default), "✓")
+    val allRows = buildList {
+        if (track.isDefault) add(stringResource(R.string.info_default) to "✓")
+        rows.forEach { (k, v) ->
+            if (!v.isNullOrBlank()) add(k to v)
         }
-        visible.forEachIndexed { index, row ->
-            InfoRow(row.first, row.second!!, showDivider = index != visible.lastIndex)
+    }
+    SettingGroup(title = title) {
+        allRows.forEachIndexed { index, row ->
+            InfoRow(row.first, row.second, showDivider = index != allRows.lastIndex)
         }
     }
 }
@@ -308,10 +339,16 @@ private fun TrackGroup(
 private fun videoRows(track: MediaTrackInfo): List<Pair<String, String?>> {
     val resolution = track.width?.let { width ->
         track.height?.let { height ->
-            "$width×$height · ${Formatters.resolutionLabel(width, height)}"
+            val short = Formatters.resolutionLabel(width, height)
+            if (short.isNotEmpty()) "$width×$height · $short" else "$width×$height"
         }
     }
-    val color = listOfNotNull(track.colorStandard, track.colorTransfer, track.colorRange)
+    val rangeLabel = when (track.colorRange) {
+        "Limited" -> stringResource(R.string.media_color_limited)
+        "Full" -> stringResource(R.string.media_color_full)
+        else -> track.colorRange
+    }
+    val color = listOfNotNull(track.colorStandard, track.colorTransfer, rangeLabel)
         .joinToString(" · ")
         .ifBlank { null }
     return listOf(
@@ -332,7 +369,7 @@ private fun audioRows(track: MediaTrackInfo): List<Pair<String, String?>> = list
     stringResource(R.string.info_codec) to track.codec,
     stringResource(R.string.info_profile) to track.profile,
     stringResource(R.string.info_channels) to track.channels?.let { channelLabel(it) },
-    stringResource(R.string.info_sample_rate) to track.sampleRate?.let { sampleRateLabel(it) },
+    stringResource(R.string.info_sample_rate) to track.sampleRate?.let { Formatters.sampleRateLabel(it) },
     stringResource(R.string.info_bitrate) to track.bitrate?.let { bitrate(it) },
     stringResource(R.string.info_language) to track.language?.uppercase(Locale.US),
     stringResource(R.string.info_track_title) to track.title,
@@ -392,7 +429,6 @@ private fun buildSource(context: android.content.Context, sourceType: String, ke
             ContentUriSource(
                 uri = key,
                 displayName = title.ifBlank { MediaUriResolver.displayName(context, uri) },
-                mimeType = MediaUriResolver.mimeOf(context, uri),
             )
         }
 
@@ -415,8 +451,8 @@ private fun readableUri(raw: String): String = runCatching {
 
 private fun trackSuffix(position: Int, track: MediaTrackInfo): String = buildString {
     append(" ")
-    append(if (track.title != null) track.title else "#${position + 1}")
-    if (track.language != null) append(" · ${track.language.uppercase(Locale.US)}")
+    append(track.title ?: "#${position + 1}")
+    track.language?.let { append(" · ${it.uppercase(Locale.US)}") }
 }
 
 private fun hdrLabel(hdr: HdrType): String = when (hdr) {
@@ -440,18 +476,12 @@ private fun formatFrameRate(value: Float): String =
         String.format(Locale.US, "%.3f fps", value)
     }
 
+@Composable
 private fun channelLabel(channels: Int): String = when (channels) {
-    1 -> "Mono (1.0)"
-    2 -> "Stereo (2.0)"
+    1 -> stringResource(R.string.media_channel_mono)
+    2 -> stringResource(R.string.media_channel_stereo)
     3 -> "2.1"
     6 -> "5.1"
     8 -> "7.1"
-    else -> "$channels ch"
+    else -> stringResource(R.string.media_channel_count, channels)
 }
-
-private fun sampleRateLabel(rate: Int): String =
-    if (rate % 1000 == 0) {
-        "${rate / 1000} kHz"
-    } else {
-        String.format(Locale.US, "%.1f kHz", rate / 1000f)
-    }

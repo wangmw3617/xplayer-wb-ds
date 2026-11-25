@@ -85,16 +85,6 @@ object XPlayerIcons {
         )
     }
 
-    val Fullscreen: ImageVector by lazy {
-        vector(
-            "Fullscreen",
-            Vec("M4,9.5 V4 h5.5"),
-            Vec("M14.5,4 H20 v5.5"),
-            Vec("M20,14.5 V20 h-5.5"),
-            Vec("M9.5,20 H4 v-5.5"),
-        )
-    }
-
     val AspectRatio: ImageVector by lazy {
         vector(
             "AspectRatio",
@@ -110,15 +100,6 @@ object XPlayerIcons {
             Vec("M4,10 h3 l4,-3.5 v11 L7,14 H4 z", filled = true),
             Vec("M14.5,9.2 a5,5 0 0,1 0,5.6"),
             Vec("M17,6.6 a8.5,8.5 0 0,1 0,10.8"),
-        )
-    }
-
-    val VolumeOff: ImageVector by lazy {
-        vector(
-            "VolumeOff",
-            Vec("M4,10 h3 l4,-3.5 v11 L7,14 H4 z", filled = true),
-            Vec("M15,9.5 L20,14.5"),
-            Vec("M20,9.5 L15,14.5"),
         )
     }
 

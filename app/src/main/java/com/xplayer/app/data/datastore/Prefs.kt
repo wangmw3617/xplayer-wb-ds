@@ -68,7 +68,8 @@ enum class SeekSpan(val seconds: Int, val ratioOfDuration: Boolean = false) {
     ;
 
     fun resolveMillis(durationMs: Long): Long = when {
-        ratioOfDuration -> (durationMs * 0.25f).toLong().coerceAtLeast(10_000L)
+        ratioOfDuration && durationMs > 0L -> (durationMs / 4L).coerceAtLeast(10_000L)
+        ratioOfDuration -> 30_000L
         else -> seconds * 1000L
     }
 }
@@ -264,4 +265,17 @@ fun AspectMode.labelRes(): Int = when (this) {
     AspectMode.RATIO_16_9 -> R.string.player_aspect_16_9
     AspectMode.RATIO_4_3 -> R.string.player_aspect_4_3
     AspectMode.ORIGINAL -> R.string.player_aspect_original
+}
+
+@StringRes
+fun SingleTapAction.labelRes(): Int = when (this) {
+    SingleTapAction.TOGGLE_CONTROLS -> R.string.gesture_tap_toggle
+    SingleTapAction.PLAY_PAUSE -> R.string.gesture_tap_play
+}
+
+@StringRes
+fun RotationMode.labelRes(): Int = when (this) {
+    RotationMode.AUTO -> R.string.player_rotate_auto
+    RotationMode.LANDSCAPE -> R.string.player_rotate_landscape
+    RotationMode.PORTRAIT -> R.string.player_rotate_portrait
 }

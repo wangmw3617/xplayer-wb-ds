@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.displayCutoutPadding
@@ -47,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -63,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xplayer.app.R
 import com.xplayer.app.data.datastore.AspectMode
+import com.xplayer.app.data.datastore.RotationMode
 import com.xplayer.app.data.datastore.SubtitlePrefs
 import com.xplayer.app.data.datastore.labelRes
 import com.xplayer.app.data.scanner.SubtitleFinder
@@ -71,16 +75,31 @@ import com.xplayer.app.player.engine.EngineType
 import com.xplayer.app.player.engine.TrackInfo
 import com.xplayer.app.ui.icons.XPlayerIcons
 import com.xplayer.app.util.Formatters
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
+import kotlin.math.roundToInt
+
+/** 字幕样式预设颜色，与设置详情页共享 */
+val SUBTITLE_COLOR_PRESETS: List<Pair<Long, Int>> = listOf(
+    0xFFFFFFFF to R.string.settings_sub_color_white,
+    0xFFFFEB3B to R.string.settings_sub_color_yellow,
+    0xFF80DEEA to R.string.settings_sub_color_cyan,
+    0xFFB9F6CA to R.string.settings_sub_color_green,
+)
+
+@Composable
+private fun panelSliderColors() = SliderDefaults.colors(
+    thumbColor = Color.White,
+    activeTrackColor = MaterialTheme.colorScheme.primary,
+    inactiveTrackColor = Color.White.copy(alpha = 0.25f),
+)
 
 /**
  * 播放页半透明面板容器：
  * - 横屏：靠右停靠，占约 2/5 屏宽（290dp..420dp），左侧留出 3/5 画面；
  * - 竖屏：靠底停靠，占约半屏高（48%），上方留出画面；
- * 统一采用暗色半透明磨砂底与柔和白边，避免打断沉浸观影。
  */
 @Composable
 private fun PlayerTranslucentPanel(
@@ -187,6 +206,7 @@ private fun PlayerTranslucentPanel(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TracksSheet(
     audioTracks: List<TrackInfo>,
@@ -199,6 +219,7 @@ fun TracksSheet(
     onSelectSubtitle: (TrackInfo?) -> Unit,
     onDelayChange: (Long) -> Unit,
     onImportSubtitle: (SidecarSubtitle) -> Unit,
+    onImportFailed: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -209,7 +230,7 @@ fun TracksSheet(
                 val imported = withContext(Dispatchers.IO) {
                     SubtitleFinder.importFromUri(context, uri)
                 }
-                if (imported != null) onImportSubtitle(imported)
+                if (imported != null) onImportSubtitle(imported) else onImportFailed()
             }
         }
     }
@@ -231,13 +252,25 @@ fun TracksSheet(
                 modifier = Modifier.padding(vertical = 8.dp),
             )
         }
+        val monoLabel = stringResource(R.string.media_channel_mono)
+        val stereoLabel = stringResource(R.string.media_channel_stereo)
         audioTracks.forEach { track ->
-            TrackRow(
+            val chLabel = track.channels?.let { ch ->
+                when (ch) {
+                    1 -> monoLabel
+                    2 -> stereoLabel
+                    6 -> "5.1"
+                    8 -> "7.1"
+                    else -> stringResource(R.string.media_channel_count, ch)
+                }
+            }
+            val codec = Formatters.codecLabel(track.mimeType) ?: track.mimeType?.substringAfter('/')?.uppercase(Locale.US)
+            PanelSelectableRow(
                 title = track.label,
                 subtitle = listOfNotNull(
-                    track.language?.uppercase(),
-                    track.channels?.let { if (it >= 6) "${if (it == 8) "7.1" else "5.1"}" else null },
-                    track.mimeType?.substringAfter('/')?.uppercase(),
+                    track.language?.uppercase(Locale.US),
+                    chLabel,
+                    codec,
                 ).joinToString(" · "),
                 selected = track.id == selectedAudio,
                 onClick = { onSelectAudio(track) },
@@ -253,18 +286,20 @@ fun TracksSheet(
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
         )
-        TrackRow(
+        PanelSelectableRow(
             title = stringResource(R.string.player_subtitle_off),
             subtitle = null,
             selected = selectedSubtitle == null,
             onClick = { onSelectSubtitle(null) },
         )
+        val extTag = stringResource(R.string.player_track_ext)
+        val intTag = stringResource(R.string.player_track_internal)
         subtitleTracks.forEach { track ->
-            TrackRow(
+            PanelSelectableRow(
                 title = track.label,
                 subtitle = listOfNotNull(
-                    track.language?.uppercase(),
-                    if (track.isExternal) "EXT" else "INTERNAL",
+                    track.language?.uppercase(Locale.US),
+                    if (track.isExternal) extTag else intTag,
                 ).joinToString(" · "),
                 selected = track.id == selectedSubtitle,
                 onClick = { onSelectSubtitle(track) },
@@ -292,40 +327,48 @@ fun TracksSheet(
             Text(
                 text = stringResource(R.string.player_subtitle_delay),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White,
+                color = Color.White.copy(alpha = if (supportsDelay) 1f else 0.55f),
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = "${if (subtitleDelayMs >= 0) "+" else ""}${subtitleDelayMs} ms",
+                text = stringResource(R.string.player_delay_value, subtitleDelayMs),
                 style = MaterialTheme.typography.labelLarge,
                 color = if (supportsDelay) {
                     MaterialTheme.colorScheme.primary
                 } else {
-                    Color(0xFFFF8A80)
+                    Color.White.copy(alpha = 0.4f)
                 },
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             listOf(-500L, -100L, 100L, 500L).forEach { step ->
-                TextButton(onClick = { onDelayChange(subtitleDelayMs + step) }) {
+                TextButton(
+                    enabled = supportsDelay,
+                    onClick = { onDelayChange(subtitleDelayMs + step) },
+                ) {
                     Text(
                         text = if (step > 0) "+$step" else step.toString(),
                         fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.88f),
+                        color = Color.White.copy(alpha = if (supportsDelay) 0.88f else 0.35f),
                     )
                 }
             }
-            TextButton(onClick = { onDelayChange(0L) }) {
+            TextButton(
+                enabled = supportsDelay && subtitleDelayMs != 0L,
+                onClick = { onDelayChange(0L) },
+            ) {
                 Text(
                     text = stringResource(R.string.common_zero),
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.primary.copy(
+                        alpha = if (supportsDelay && subtitleDelayMs != 0L) 1f else 0.35f,
+                    ),
                 )
             }
         }
         if (!supportsDelay) {
             Text(
-                text = stringResource(R.string.player_switch_engine) + " → libmpv",
+                text = stringResource(R.string.player_delay_unsupported),
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.White.copy(alpha = 0.65f),
             )
@@ -335,7 +378,13 @@ fun TracksSheet(
 }
 
 @Composable
-private fun TrackRow(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
+private fun PanelSelectableRow(
+    title: String,
+    subtitle: String? = null,
+    icon: ImageVector? = null,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -345,6 +394,15 @@ private fun TrackRow(title: String, subtitle: String?, selected: Boolean, onClic
             .padding(vertical = 10.dp, horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.72f),
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
@@ -371,23 +429,22 @@ private fun TrackRow(title: String, subtitle: String?, selected: Boolean, onClic
 
 @Composable
 fun SpeedSheet(current: Float, onSpeed: (Float) -> Unit, onDismiss: () -> Unit) {
-    var draft by remember { mutableFloatStateOf(current) }
+    var draft by remember(current) { mutableFloatStateOf(current) }
     PlayerTranslucentPanel(
-        title = "${stringResource(R.string.player_speed)} · ${Formatters.speed(draft)}×",
+        title = "${stringResource(R.string.player_speed)} · ${stringResource(R.string.settings_speed_x, Formatters.speed(draft))}",
         onDismiss = onDismiss,
     ) {
         Slider(
             value = draft,
-            onValueChange = {
-                draft = (Math.round(it * 20f) / 20f)
-                onSpeed(draft)
+            onValueChange = { raw ->
+                val quantized = (raw * 20f).roundToInt() / 20f
+                if (quantized != draft) {
+                    draft = quantized
+                }
             },
+            onValueChangeFinished = { onSpeed(draft) },
             valueRange = 0.25f..4f,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-            ),
+            colors = panelSliderColors(),
             modifier = Modifier.padding(vertical = 8.dp),
         )
         listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f, 4f).chunked(4).forEach { row ->
@@ -418,7 +475,7 @@ fun SpeedSheet(current: Float, onSpeed: (Float) -> Unit, onDismiss: () -> Unit) 
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = "${Formatters.speed(preset)}×",
+                            text = stringResource(R.string.settings_speed_x, Formatters.speed(preset)),
                             style = MaterialTheme.typography.labelMedium,
                             color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
@@ -437,44 +494,15 @@ fun AspectSheet(current: AspectMode, onSelect: (AspectMode) -> Unit, onDismiss: 
         onDismiss = onDismiss,
     ) {
         AspectMode.entries.forEach { mode ->
-            val selected = mode == current
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (selected) Color.White.copy(alpha = 0.08f) else Color.Transparent)
-                    .clickable {
-                        onSelect(mode)
-                        onDismiss()
-                    }
-                    .padding(vertical = 12.dp, horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = XPlayerIcons.AspectRatio,
-                    contentDescription = null,
-                    tint = if (selected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        Color.White.copy(alpha = 0.72f)
-                    },
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text = stringResource(mode.labelRes()),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (selected) MaterialTheme.colorScheme.primary else Color.White,
-                    modifier = Modifier.weight(1f),
-                )
-                if (selected) {
-                    Text(
-                        text = "✓",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-            }
+            PanelSelectableRow(
+                title = stringResource(mode.labelRes()),
+                icon = XPlayerIcons.AspectRatio,
+                selected = mode == current,
+                onClick = {
+                    onSelect(mode)
+                    onDismiss()
+                },
+            )
         }
     }
 }
@@ -485,24 +513,37 @@ fun SubtitleStyleSheet(
     onChange: (SubtitlePrefs) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var draft by remember(style) { mutableStateOf(style) }
+    val sliderColors = panelSliderColors()
+
     PlayerTranslucentPanel(
         title = stringResource(R.string.player_subtitle_style),
         onDismiss = onDismiss,
     ) {
         Text(
-            text = "${stringResource(R.string.settings_sub_font_size)} · ${style.fontScalePercent}%",
+            text = "${stringResource(R.string.settings_sub_font_size)} · ${draft.fontScalePercent}%",
             style = MaterialTheme.typography.bodySmall,
             color = Color.White.copy(alpha = 0.85f),
         )
         Slider(
-            value = style.fontScalePercent.toFloat(),
-            onValueChange = { onChange(style.copy(fontScalePercent = it.toInt())) },
-            valueRange = 50f..200f,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-            ),
+            value = draft.fontScalePercent.toFloat(),
+            onValueChange = { draft = draft.copy(fontScalePercent = it.roundToInt()) },
+            onValueChangeFinished = { onChange(draft) },
+            valueRange = 50f..220f,
+            colors = sliderColors,
+        )
+
+        Text(
+            text = "${stringResource(R.string.settings_sub_outline)} · ${draft.outlinePercent}%",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.85f),
+        )
+        Slider(
+            value = draft.outlinePercent.toFloat(),
+            onValueChange = { draft = draft.copy(outlinePercent = it.roundToInt()) },
+            onValueChangeFinished = { onChange(draft) },
+            valueRange = 0f..200f,
+            colors = sliderColors,
         )
 
         Text(
@@ -512,8 +553,8 @@ fun SubtitleStyleSheet(
         )
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            listOf(0xFFFFFFFF, 0xFFFFEB3B, 0xFF80DEEA, 0xFFB9F6CA).forEach { argb ->
-                val selected = style.colorArgb == argb
+            SUBTITLE_COLOR_PRESETS.forEach { (argb, _) ->
+                val selected = draft.colorArgb == argb
                 Box(
                     modifier = Modifier
                         .size(30.dp)
@@ -526,41 +567,50 @@ fun SubtitleStyleSheet(
                                 Modifier
                             },
                         )
-                        .clickable { onChange(style.copy(colorArgb = argb)) },
+                        .clickable {
+                            draft = draft.copy(colorArgb = argb)
+                            onChange(draft)
+                        },
                 )
             }
         }
         Spacer(Modifier.height(10.dp))
         PanelSwitchRow(
             label = stringResource(R.string.settings_sub_shadow),
-            checked = style.shadow,
-            onCheckedChange = { onChange(style.copy(shadow = it)) },
+            checked = draft.shadow,
+            onCheckedChange = {
+                draft = draft.copy(shadow = it)
+                onChange(draft)
+            },
         )
         PanelSwitchRow(
             label = stringResource(R.string.settings_sub_bg),
-            checked = style.backgroundBar,
-            onCheckedChange = { onChange(style.copy(backgroundBar = it)) },
+            checked = draft.backgroundBar,
+            onCheckedChange = {
+                draft = draft.copy(backgroundBar = it)
+                onChange(draft)
+            },
         )
         PanelSwitchRow(
             label = stringResource(R.string.settings_sub_force_ass),
-            checked = style.forceAssOverride,
-            onCheckedChange = { onChange(style.copy(forceAssOverride = it)) },
+            checked = draft.forceAssOverride,
+            onCheckedChange = {
+                draft = draft.copy(forceAssOverride = it)
+                onChange(draft)
+            },
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${stringResource(R.string.settings_sub_margin)} · ${style.bottomMarginDp} dp",
+            text = "${stringResource(R.string.settings_sub_margin)} · ${draft.bottomMarginDp} dp",
             style = MaterialTheme.typography.bodySmall,
             color = Color.White.copy(alpha = 0.85f),
         )
         Slider(
-            value = style.bottomMarginDp.toFloat(),
-            onValueChange = { onChange(style.copy(bottomMarginDp = it.toInt())) },
+            value = draft.bottomMarginDp.toFloat(),
+            onValueChange = { draft = draft.copy(bottomMarginDp = it.roundToInt()) },
+            onValueChangeFinished = { onChange(draft) },
             valueRange = 0f..120f,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-            ),
+            colors = sliderColors,
         )
     }
 }
@@ -597,12 +647,8 @@ private fun PanelSwitchRow(
     }
 }
 
-@Composable
-fun fileLabel(path: String): String = File(path).name
-
 /**
- * 播放页设置：横屏占右侧约 2/5 屏宽、竖屏占底部约半屏的半透明面板，
- * 保留大片可见播放画面，随时调内核/画面/方向/截图等操作。
+ * 播放页设置：横屏占右侧约 2/5 屏宽、竖屏占底部约半屏的半透明面板。
  */
 @Composable
 fun PlayerSettingsSheet(
@@ -610,14 +656,14 @@ fun PlayerSettingsSheet(
     mpvAvailable: Boolean,
     mpvBlockedByUri: Boolean = false,
     aspectLabel: String,
-    rotationMode: Int,
+    rotationMode: RotationMode,
     onSwitchEngine: (EngineType) -> Unit,
     onAspect: () -> Unit,
     onSubtitleStyle: () -> Unit,
     onScreenshot: () -> Unit,
     onBackgroundAudio: () -> Unit,
     onPip: () -> Unit,
-    onRotate: (Int) -> Unit,
+    onRotate: (RotationMode) -> Unit,
     onLock: () -> Unit,
     onMediaInfo: () -> Unit,
     onDismiss: () -> Unit,
@@ -674,16 +720,10 @@ fun PlayerSettingsSheet(
         PlayerSheetRow(
             icon = XPlayerIcons.RotateScreen,
             title = stringResource(R.string.player_orientation),
-            subtitle = stringResource(
-                when (rotationMode) {
-                    1 -> R.string.player_rotate_landscape
-                    2 -> R.string.player_rotate_portrait
-                    else -> R.string.player_rotate_auto
-                },
-            ),
+            subtitle = stringResource(rotationMode.labelRes()),
             trailing = {
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    listOf(0, 1, 2).forEach { mode ->
+                    RotationMode.entries.forEach { mode ->
                         val selected = rotationMode == mode
                         Box(
                             modifier = Modifier
@@ -699,13 +739,7 @@ fun PlayerSettingsSheet(
                                 .padding(horizontal = 8.dp, vertical = 4.dp),
                         ) {
                             Text(
-                                text = stringResource(
-                                    when (mode) {
-                                        1 -> R.string.player_rotate_landscape
-                                        2 -> R.string.player_rotate_portrait
-                                        else -> R.string.player_rotate_auto
-                                    },
-                                ),
+                                text = stringResource(mode.labelRes()),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (selected) {
                                     MaterialTheme.colorScheme.onPrimary
@@ -717,7 +751,7 @@ fun PlayerSettingsSheet(
                     }
                 }
             },
-            onClick = {},
+            onClick = null,
         )
 
         PlayerSheetSectionTitle(stringResource(R.string.player_section_actions))
@@ -827,13 +861,13 @@ private fun PlayerSheetRow(
     title: String,
     subtitle: String? = null,
     trailing: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 10.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

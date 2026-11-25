@@ -31,6 +31,8 @@
     <application
         android:name=".XPlayerApp"
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:largeHeap="true"
@@ -42,7 +44,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density|locale|layoutDirection|fontScale"
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
             android:theme="@style/Theme.XPlayer">
@@ -64,6 +66,17 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+
+            <!-- HTTP/HTTPS 直链媒体打开方式 -->
+            <intent-filter android:label="@string/app_name">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:mimeType="video/*" />
                 <data android:mimeType="audio/*" />
             </intent-filter>
 
@@ -125,7 +138,7 @@
             android:label="@string/inspect_app_label"
             android:excludeFromRecents="true"
             android:taskAffinity=""
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density|locale|layoutDirection|fontScale"
             android:theme="@style/Theme.XPlayer">
 
             <intent-filter android:label="@string/inspect_app_label">
@@ -182,12 +195,10 @@
             </intent-filter>
         </activity>
 
-        <!-- exported=true 供系统媒体控制与蓝牙按键连接 MediaSession -->
         <service
             android:name=".player.service.PlaybackService"
-            android:exported="true"
-            android:foregroundServiceType="mediaPlayback"
-            tools:ignore="ExportedService">
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>

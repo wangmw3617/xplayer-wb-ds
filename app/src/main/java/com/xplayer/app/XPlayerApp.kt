@@ -1,6 +1,7 @@
 package com.xplayer.app
 
 import android.app.Application
+import com.xplayer.app.data.datastore.SettingsRepository
 import com.xplayer.app.data.local.XPlayerDatabase
 import com.xplayer.app.data.repository.FolderRepository
 import com.xplayer.app.data.repository.PlaybackRepository
@@ -8,7 +9,9 @@ import com.xplayer.app.data.repository.ShaderRepository
 import com.xplayer.app.data.repository.StreamRepository
 import com.xplayer.app.data.repository.VideoRepository
 import com.xplayer.app.data.scanner.MediaScanner
-import com.xplayer.app.data.datastore.SettingsRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 class XPlayerApp : Application() {
 
@@ -28,13 +31,13 @@ class AppContainer(private val app: Application) {
 
     val application: Application get() = app
 
+    val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     val database: XPlayerDatabase by lazy { XPlayerDatabase.get(app) }
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(app) }
 
-    val videoRepository: VideoRepository by lazy {
-        VideoRepository(app, database.videoDao(), database.playbackHistoryDao())
-    }
+    val videoRepository: VideoRepository by lazy { VideoRepository(app, database) }
 
     val playbackRepository: PlaybackRepository by lazy { PlaybackRepository(database.playbackHistoryDao()) }
 
@@ -45,9 +48,6 @@ class AppContainer(private val app: Application) {
     val shaderRepository: ShaderRepository by lazy { ShaderRepository(app, database.mpvShaderDao()) }
 
     val mediaScanner: MediaScanner by lazy {
-        MediaScanner(app, videoRepository, folderRepository, settingsRepository)
+        MediaScanner(app, appScope, videoRepository, folderRepository)
     }
 }
-
-val Application.xplayerContainer: AppContainer
-    get() = (this as XPlayerApp).container

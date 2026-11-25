@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
@@ -34,14 +36,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
+import com.xplayer.app.R
+import com.xplayer.app.data.local.HdrType
+import com.xplayer.app.ui.icons.XPlayerIcons
+import com.xplayer.app.util.Formatters
 import java.io.File
 
 /** FlClash 风格分组：中性或柔和次标题 + 高圆角纯白/深色卡片容器 */
@@ -112,13 +126,15 @@ fun SettingRow(
     iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    enabled: Boolean = true,
     showDivider: Boolean = true,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+                .then(if (enabled && onClick != null) Modifier.clickable { onClick() } else Modifier)
+                .alpha(if (enabled) 1f else 0.38f)
                 .padding(horizontal = 18.dp, vertical = 15.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -177,7 +193,12 @@ fun SettingSwitchRow(
         title = title,
         subtitle = subtitle,
         icon = icon,
-        onClick = { if (enabled) onCheckedChange(!checked) },
+        enabled = enabled,
+        onClick = if (enabled) {
+            { onCheckedChange(!checked) }
+        } else {
+            null
+        },
         trailing = {
             Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
         },
@@ -223,6 +244,7 @@ fun <T> InlinePickerRow(
     SettingRow(
         title = title,
         icon = icon,
+        enabled = enabled,
         onClick = if (enabled) {
             { open = true }
         } else {
@@ -239,7 +261,7 @@ fun <T> InlinePickerRow(
                 )
                 Spacer(Modifier.width(4.dp))
                 Icon(
-                    imageVector = com.xplayer.app.ui.icons.XPlayerIcons.UnfoldMore,
+                    imageVector = XPlayerIcons.UnfoldMore,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     modifier = Modifier.size(18.dp),
@@ -279,39 +301,45 @@ fun <T> OptionSheet(
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
         )
-        options.forEach { option ->
-            val isSelected = option.value == selected
-            val tint by animateColorAsState(
-                if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                label = "optionTint",
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onSelect(option.value)
-                        onDismiss()
+        Column(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            options.forEach { option ->
+                val isSelected = option.value == selected
+                val tint by animateColorAsState(
+                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    label = "optionTint",
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onSelect(option.value)
+                            onDismiss()
+                        }
+                        .padding(horizontal = 24.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = option.label, style = MaterialTheme.typography.bodyLarge, color = tint)
+                        if (option.description != null) {
+                            Text(
+                                text = option.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
-                    .padding(horizontal = 24.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = option.label, style = MaterialTheme.typography.bodyLarge, color = tint)
-                    if (option.description != null) {
-                        Text(
-                            text = option.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp),
                         )
                     }
-                }
-                if (isSelected) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp),
-                    )
                 }
             }
         }
@@ -320,9 +348,14 @@ fun <T> OptionSheet(
 }
 
 @Composable
-fun MicroBadge(text: String, container: Color, content: Color = Color.White) {
+fun MicroBadge(
+    text: String,
+    container: Color,
+    content: Color = if (container.luminance() > 0.40f) Color(0xFF181A1F) else Color.White,
+    modifier: Modifier = Modifier,
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(6.dp))
             .background(container)
             .padding(horizontal = 5.dp, vertical = 1.dp),
@@ -333,6 +366,52 @@ fun MicroBadge(text: String, container: Color, content: Color = Color.White) {
             color = content,
             fontWeight = FontWeight.SemiBold,
         )
+    }
+}
+
+@Composable
+fun HdrBadge(hdr: HdrType, modifier: Modifier = Modifier) {
+    val label = Formatters.hdrShortBadge(hdr).ifEmpty { return }
+    val bg = when (hdr) {
+        HdrType.DOLBY_VISION -> Color(0xFF6D28D9)
+        HdrType.HDR10_PLUS, HdrType.HDR10 -> Color(0xFFD97706)
+        HdrType.HLG -> Color(0xFF0F766E)
+        HdrType.NONE -> return
+    }
+    MicroBadge(text = label, container = bg, modifier = modifier)
+}
+
+@Composable
+fun InfoRow(
+    label: String,
+    value: String,
+    showDivider: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 7.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.End,
+            )
+        }
+        if (showDivider) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+        }
     }
 }
 
@@ -361,13 +440,18 @@ fun EmptyState(
             )
             Spacer(Modifier.height(16.dp))
         }
-        Text(text = title, style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+        )
         if (description != null) {
             Spacer(Modifier.height(6.dp))
             Text(
                 text = description,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
         }
@@ -384,18 +468,43 @@ fun EmptyState(
 fun Thumbnail(
     path: String?,
     modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(14.dp),
     contentScale: ContentScale = ContentScale.Crop,
 ) {
+    val context = LocalContext.current
+    val request = remember(path, context) {
+        path?.let {
+            ImageRequest.Builder(context)
+                .data(File(it))
+                .memoryCacheKey("thumb:$it")
+                .diskCacheKey("thumb:$it")
+                .crossfade(true)
+                .build()
+        }
+    }
+    var loadFailed by remember(path) { mutableStateOf(false) }
+
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+        contentAlignment = Alignment.Center,
     ) {
-        if (path != null) {
+        if (request == null || loadFailed) {
+            Icon(
+                imageVector = XPlayerIcons.Video,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.42f),
+                modifier = Modifier.size(26.dp),
+            )
+        }
+        if (request != null) {
             AsyncImage(
-                model = File(path),
+                model = request,
                 contentDescription = null,
                 contentScale = contentScale,
+                onError = { loadFailed = true },
+                onSuccess = { loadFailed = false },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -411,6 +520,7 @@ fun <T> PickerSettingRow(
     options: List<SheetOption<T>>,
     selected: T,
     enabled: Boolean = true,
+    showDivider: Boolean = true,
     onSelect: (T) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -418,12 +528,14 @@ fun <T> PickerSettingRow(
         title = title,
         subtitle = subtitle,
         icon = icon,
+        enabled = enabled,
         onClick = if (enabled) {
             { open = true }
         } else {
             null
         },
         trailing = { ChevronTrailing() },
+        showDivider = showDivider,
     )
     if (open) {
         OptionSheet(
@@ -445,19 +557,27 @@ fun SliderSettingRow(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     steps: Int = 0,
+    enabled: Boolean = true,
+    showDivider: Boolean = true,
     format: (Float) -> String,
     onChange: (Float) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
-    var draft by remember(value) { mutableStateOf(value) }
     SettingRow(
         title = title,
         subtitle = subtitle,
         icon = icon,
-        onClick = { open = true },
+        enabled = enabled,
+        onClick = if (enabled) {
+            { open = true }
+        } else {
+            null
+        },
         trailing = { ChevronTrailing(format(value)) },
+        showDivider = showDivider,
     )
     if (open) {
+        var draft by remember(value) { mutableStateOf(value) }
         OptionSliderSheet(
             title = title,
             draft = draft,
@@ -514,10 +634,10 @@ private fun OptionSliderSheet(
                 horizontalArrangement = Arrangement.End,
             ) {
                 androidx.compose.material3.TextButton(onClick = onDismiss) {
-                    Text(androidx.compose.ui.res.stringResource(com.xplayer.app.R.string.common_cancel))
+                    Text(stringResource(R.string.common_cancel))
                 }
                 androidx.compose.material3.TextButton(onClick = onConfirm) {
-                    Text(androidx.compose.ui.res.stringResource(com.xplayer.app.R.string.common_apply))
+                    Text(stringResource(R.string.common_apply))
                 }
             }
             Spacer(Modifier.height(16.dp))

@@ -69,7 +69,10 @@ fun Modifier.frostedBackdropSource(
     if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         this
             .onGloballyPositioned { coords ->
-                state.sourceOriginInRoot = coords.positionInRoot()
+                val pos = coords.positionInRoot()
+                if (state.sourceOriginInRoot != pos) {
+                    state.sourceOriginInRoot = pos
+                }
             }
             .drawWithContent {
                 state.layer.record {
@@ -136,10 +139,16 @@ fun FrostedGlassSurface(
     val density = LocalDensity.current
     val blurRadiusPx = remember(density) { with(density) { 18.dp.toPx() } }
     val bleedPx = remember(density) { with(density) { 20.dp.roundToPx() } }
+    val blurEffect = remember(blurRadiusPx, blurSupported) {
+        if (blurSupported) BlurEffect(blurRadiusPx, blurRadiusPx, TileMode.Clamp) else null
+    }
 
     Box(
         modifier = modifier
-            .onGloballyPositioned { coords -> originInRoot = coords.positionInRoot() }
+            .onGloballyPositioned { coords ->
+                val pos = coords.positionInRoot()
+                if (originInRoot != pos) originInRoot = pos
+            }
             .clip(shape)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = contentAlignment,
@@ -160,7 +169,8 @@ fun FrostedGlassSurface(
                         }
                     }
                     .graphicsLayer {
-                        renderEffect = BlurEffect(blurRadiusPx, blurRadiusPx, TileMode.Clamp)
+                        clip = true
+                        renderEffect = blurEffect
                     }
                     .drawBehind {
                         drawRect(backdropColor)

@@ -30,9 +30,15 @@ object Routes {
         title: String,
         startMs: Long = 0L,
         hasEmbeddedAss: Boolean = false,
-    ): String = "player?type=$sourceType&key=${Uri.encode(key)}&title=${Uri.encode(title)}" +
-        "&start=$startMs&ass=$hasEmbeddedAss"
+    ): String {
+        val safeTitle = sanitizeArg(title)
+        return "player?type=${Uri.encode(sourceType)}&key=${Uri.encode(key)}&title=${Uri.encode(safeTitle)}" +
+            "&start=$startMs&ass=$hasEmbeddedAss"
+    }
 
     fun mediaInfo(sourceType: String, key: String, title: String): String =
-        "media/info?type=$sourceType&key=${Uri.encode(key)}&title=${Uri.encode(title)}"
+        "media/info?type=${Uri.encode(sourceType)}&key=${Uri.encode(key)}&title=${Uri.encode(sanitizeArg(title))}"
+
+    // NavDeepLink Regex 校验默认禁止换行，提前替换防止特殊文件名崩溃
+    private fun sanitizeArg(raw: String): String = raw.replace('\n', ' ').replace('\r', ' ')
 }

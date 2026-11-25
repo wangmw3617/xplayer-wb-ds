@@ -21,11 +21,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -45,7 +45,6 @@ import com.xplayer.app.data.datastore.AppSettings
 import com.xplayer.app.data.datastore.BottomBarStyle
 import com.xplayer.app.data.local.PlaybackHistoryEntity
 import com.xplayer.app.data.local.SourceType
-import com.xplayer.app.data.local.VideoEntity
 import com.xplayer.app.data.source.ContentUriSource
 import com.xplayer.app.data.source.LocalFileSource
 import com.xplayer.app.data.source.MediaUriResolver
@@ -94,22 +93,26 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        externalMediaUri.value = mediaUriOf(intent)
+        if (savedInstanceState == null) {
+            externalMediaUri.value = mediaUriOf(intent)
+        }
 
         setContent {
             val container = (application as XPlayerApp).container
-            val settings by container.settingsRepository.settings
-                .collectAsState(initial = AppSettings())
+            val settingsOrNull by container.settingsRepository.settings
+                .collectAsState(initial = null)
+            val settings = settingsOrNull ?: AppSettings()
 
             XPlayerTheme(settings.appearance) {
-                // 主题可能由偏好强制成深色，系统栏图标需跟着走
+                var inPlayerRoute by remember { mutableStateOf(false) }
                 val view = LocalView.current
                 val darkSurface = MaterialTheme.colorScheme.background.luminance() < 0.5f
-                SideEffect {
-                    WindowCompat.getInsetsController(window, view).apply {
-                        isAppearanceLightStatusBars = !darkSurface
-                        isAppearanceLightNavigationBars = !darkSurface
+                LaunchedEffect(darkSurface, inPlayerRoute) {
+                    if (!inPlayerRoute) {
+                        WindowCompat.getInsetsController(window, view).apply {
+                            isAppearanceLightStatusBars = !darkSurface
+                            isAppearanceLightNavigationBars = !darkSurface
+                        }
                     }
                 }
                 Box(
@@ -118,11 +121,12 @@ class MainActivity : ComponentActivity() {
                         .background(MaterialTheme.colorScheme.background),
                 ) {
                     XPlayerNavHost(
-                        autoScanOnLaunch = settings.media.autoScanOnLaunch,
+                        autoScanEnabled = settingsOrNull?.media?.autoScanOnLaunch,
                         bottomBarStyle = settings.appearance.bottomBarStyle,
                         animationLevel = settings.appearance.animationLevel,
                         externalMediaUri = externalMediaUri,
                         onExternalMediaConsumed = { externalMediaUri.value = null },
+                        onPlayerRouteChanged = { inPlayerRoute = it },
                     )
                 }
             }
@@ -140,7 +144,10 @@ class MainActivity : ComponentActivity() {
         if (intent?.action != Intent.ACTION_VIEW) return null
         val uri = intent.data ?: return null
         val scheme = uri.scheme?.lowercase() ?: return null
-        return uri.takeIf { scheme == "content" || scheme == "file" || scheme == "http" || scheme == "https" }
+        return uri.takeIf {
+            scheme == "content" || scheme == "file" || scheme == "http" ||
+                scheme == "https" || scheme == "rtsp" || scheme == "rtmp"
+        }
     }
 
     /**
@@ -168,15 +175,19 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun XPlayerNavHost(
-    autoScanOnLaunch: Boolean,
+    autoScanEnabled: Boolean?,
     bottomBarStyle: BottomBarStyle,
     animationLevel: AnimationLevel,
     externalMediaUri: StateFlow<Uri?>,
     onExternalMediaConsumed: () -> Unit,
+    onPlayerRouteChanged: (Boolean) -> Unit = {},
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    LaunchedEffect(currentRoute) {
+        onPlayerRouteChanged(currentRoute?.startsWith("player") == true)
+    }
     val context = LocalContext.current
     val container = (context.applicationContext as XPlayerApp).container
     val appBackdropState = rememberFrostedBackdropState()
@@ -184,11 +195,11 @@ private fun XPlayerNavHost(
     val permission = rememberStoragePermission()
     var autoScanned by rememberSaveable { mutableStateOf(false) }
 
-    // 首次拿到权限后自动扫库一次，后续由用户手动触发
-    LaunchedEffect(permission.granted, autoScanOnLaunch) {
-        if (permission.granted && autoScanOnLaunch && !autoScanned) {
+    // 等 DataStore 真实设置到达后再决定是否自动扫描，避免冷启动默认值误触发
+    LaunchedEffect(permission.granted, autoScanEnabled) {
+        if (permission.granted && autoScanEnabled == true && !autoScanned) {
             autoScanned = true
-            withContext(Dispatchers.IO) { runCatching { container.mediaScanner.scan() } }
+            container.mediaScanner.triggerScan()
         }
     }
 
@@ -218,13 +229,9 @@ private fun XPlayerNavHost(
                 return@collectLatest
             }
             // 已停在播放页时先退出去，否则旧内核会继续出声
-            var guard = 0
-            while (navController.currentDestination?.route?.startsWith("player") == true && guard < 4) {
-                guard++
-                if (!navController.popBackStack()) break
-            }
+            navController.popBackStack(Routes.PLAYER, inclusive = true)
             when (source) {
-                is LocalFileSource -> openPlayer("local", source.path, source.displayName, 0L, false, allowReplace = true)
+                is LocalFileSource -> openPlayer("local", source.path, source.displayName, 0L, source.hasEmbeddedAss, allowReplace = true)
                 is ContentUriSource -> openPlayer("uri", source.uri, source.displayName, 0L, false, allowReplace = true)
                 is NetworkUrlSource -> openPlayer("network", source.url, source.displayName, 0L, false, allowReplace = true)
             }
@@ -277,9 +284,6 @@ private fun XPlayerNavHost(
                 ) {
             composable(Routes.HOME) {
                 HomeScreen(
-                    onPlayVideo = { video: VideoEntity, start: Long ->
-                        openPlayer("local", video.path, video.title, start, video.hasAssSubtitle)
-                    },
                     onResumeHistory = { entry: PlaybackHistoryEntity ->
                         openPlayer(
                             if (entry.sourceType == SourceType.LOCAL) "local" else "network",
@@ -293,7 +297,6 @@ private fun XPlayerNavHost(
                         openPlayer("network", url, title?.takeIf { it.isNotBlank() } ?: url, 0L, false)
                     },
                     onOpenCodec = { navController.navigate(Routes.CODEC) },
-                    onOpenVideos = { navController.navigate(Routes.VIDEOS) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     permissionGranted = permission.granted,
                     onRequestPermission = permission.request,
@@ -317,6 +320,9 @@ private fun XPlayerNavHost(
                         openPlayer("local", video.path, video.title, start, video.hasAssSubtitle)
                     },
                     onOpenHiddenFolders = { navController.navigate(Routes.HIDDEN_FOLDERS) },
+                    onOpenInfo = { video ->
+                        navController.navigate(Routes.mediaInfo("local", video.path, video.title))
+                    },
                 )
             }
 
@@ -408,18 +414,26 @@ private fun XPlayerNavHost(
                 val key = args?.getString("key").orEmpty()
                 val title = args?.getString("title").orEmpty()
                 val start = args?.getLong("start") ?: 0L
+                val ass = args?.getBoolean("ass") ?: false
                 val viewModel = rememberAppVM(key = "player:$type:$key") { container ->
-                    PlayerViewModel(container, type, key, title, start)
+                    PlayerViewModel(container, type, key, title, start, ass)
                 }
                 PlayerScreen(
                     viewModel = viewModel,
                     onBack = { navController.popBackStack() },
                     onOpenMediaInfo = {
+                        val current = viewModel.controller.currentSource()
+                        val infoType = when (current) {
+                            is ContentUriSource -> "uri"
+                            is NetworkUrlSource -> "network"
+                            is LocalFileSource -> "local"
+                            null -> viewModel.sourceKind
+                        }
                         navController.navigate(
                             Routes.mediaInfo(
-                                viewModel.sourceKind,
-                                viewModel.sourceKey,
-                                viewModel.sourceTitle,
+                                infoType,
+                                current?.key ?: viewModel.activeKey,
+                                current?.displayName ?: viewModel.activeTitle,
                             ),
                         )
                     },

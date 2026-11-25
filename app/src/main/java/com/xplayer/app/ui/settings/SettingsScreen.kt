@@ -4,14 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -20,18 +18,23 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -39,6 +42,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.xplayer.app.R
+import com.xplayer.app.data.datastore.BottomBarStyle
 import com.xplayer.app.data.datastore.ThemeMode
 import com.xplayer.app.data.datastore.labelRes
 import com.xplayer.app.ui.common.rememberAppVM
@@ -47,6 +51,7 @@ import com.xplayer.app.ui.components.FrostedBackdropState
 import com.xplayer.app.ui.components.FrostedGlassSurface
 import com.xplayer.app.ui.components.FrostedHeaderScrim
 import com.xplayer.app.ui.components.InlinePickerRow
+import com.xplayer.app.ui.components.LocalAppBackdropState
 import com.xplayer.app.ui.components.SettingGroup
 import com.xplayer.app.ui.components.SettingRow
 import com.xplayer.app.ui.components.SettingSwitchRow
@@ -55,7 +60,10 @@ import com.xplayer.app.ui.components.frostedBackdropSource
 import com.xplayer.app.ui.components.rememberFrostedBackdropState
 import com.xplayer.app.ui.icons.XPlayerIcons
 import com.xplayer.app.ui.navigation.Routes
+import com.xplayer.app.ui.navigation.aboveBottomBar
+import com.xplayer.app.ui.navigation.bottomBarListPadding
 import com.xplayer.app.ui.permission.PermissionBanner
+import com.xplayer.app.util.Formatters
 import kotlinx.coroutines.launch
 
 @Composable
@@ -69,13 +77,23 @@ fun SettingsScreen(
     val videoCount by viewModel.videoCount.collectAsState()
     val scanState by viewModel.scanState.collectAsState()
     val hidden by viewModel.hiddenFolders.collectAsState()
+    val versionName by viewModel.versionName.collectAsState()
+    val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsState()
+
+    var clearHistoryConfirm by remember { mutableStateOf(false) }
 
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val headerInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val backdropState = rememberFrostedBackdropState()
+
+    // 液态玻璃底栏模式下 MainActivity 已录制全局 Backdrop，此处直接复用以避免双重离屏渲染
+    val sharedBackdrop = LocalAppBackdropState.current
+    val useSharedBackdrop = sharedBackdrop != null &&
+        settings.appearance.bottomBarStyle == BottomBarStyle.LIQUID_GLASS
+    val localBackdrop = rememberFrostedBackdropState()
+    val backdropState = if (useSharedBackdrop) checkNotNull(sharedBackdrop) else localBackdrop
 
     LaunchedEffect(Unit) {
         viewModel.messages.collect { snackbar.showSnackbar(context.getString(it)) }
@@ -89,20 +107,17 @@ fun SettingsScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .frostedBackdropSource(backdropState)
+                .frostedBackdropSource(localBackdrop, enabled = !useSharedBackdrop)
                 .background(MaterialTheme.colorScheme.background),
         ) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    top = headerInset + 72.dp,
-                    bottom = 118.dp,
-                ),
+                contentPadding = bottomBarListPadding(top = headerInset + 72.dp, extraBottom = 104.dp),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 if (!permissionGranted) {
-                    item {
+                    item(key = "permission", contentType = "permission") {
                         PermissionBanner(
                             onRequest = onRequestPermission,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -111,7 +126,7 @@ fun SettingsScreen(
                 }
 
                 // 顶部核心卡片：复刻 FlClash 截图简洁单行分组结构
-                item {
+                item(key = "primary_group", contentType = "group") {
                     SettingGroup {
                         SettingRow(
                             title = stringResource(R.string.settings_group_appearance),
@@ -128,7 +143,13 @@ fun SettingsScreen(
                         SettingRow(
                             title = stringResource(R.string.settings_scan_now),
                             icon = Icons.Default.Refresh,
-                            onClick = viewModel::scan,
+                            onClick = {
+                                if (!permissionGranted) {
+                                    onRequestPermission()
+                                } else if (!scanState.scanning) {
+                                    viewModel.scan()
+                                }
+                            },
                             trailing = {
                                 if (scanState.scanning) {
                                     Text(
@@ -154,7 +175,7 @@ fun SettingsScreen(
                 }
 
                 // 主设置卡片：复刻 FlClash「设置」区段标题与单行控件风格
-                item {
+                item(key = "main_group", contentType = "group") {
                     SettingGroup(title = stringResource(R.string.settings_title)) {
                         InlinePickerRow(
                             title = stringResource(R.string.settings_dark),
@@ -202,7 +223,27 @@ fun SettingsScreen(
                             title = stringResource(R.string.settings_group_about),
                             icon = Icons.Default.Info,
                             onClick = { onNavigate(Routes.ABOUT) },
-                            trailing = { ChevronTrailing("v${viewModel.versionName}") },
+                            trailing = { ChevronTrailing("v$versionName") },
+                            showDivider = false,
+                        )
+                    }
+                }
+
+                item(key = "maintenance_group", contentType = "group") {
+                    SettingGroup(title = stringResource(R.string.settings_section_advanced)) {
+                        SettingRow(
+                            title = stringResource(R.string.settings_clear_cache),
+                            subtitle = stringResource(R.string.settings_clear_cache_desc, Formatters.size(cacheSizeBytes)),
+                            icon = XPlayerIcons.Storage,
+                            onClick = viewModel::clearCache,
+                            trailing = { ChevronTrailing() },
+                        )
+                        SettingRow(
+                            title = stringResource(R.string.settings_clear_history),
+                            subtitle = stringResource(R.string.settings_clear_history_desc),
+                            icon = Icons.Default.Delete,
+                            onClick = { clearHistoryConfirm = true },
+                            trailing = { ChevronTrailing() },
                             showDivider = false,
                         )
                     }
@@ -223,8 +264,28 @@ fun SettingsScreen(
             hostState = snackbar,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 98.dp),
+                .aboveBottomBar(),
+        )
+    }
+
+    if (clearHistoryConfirm) {
+        AlertDialog(
+            onDismissRequest = { clearHistoryConfirm = false },
+            title = { Text(stringResource(R.string.settings_clear_history)) },
+            text = { Text(stringResource(R.string.settings_clear_history_confirm)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        clearHistoryConfirm = false
+                        viewModel.clearHistory()
+                    },
+                ) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearHistoryConfirm = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
         )
     }
 }

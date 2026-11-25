@@ -13,13 +13,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,29 +36,34 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xplayer.app.R
 import com.xplayer.app.data.datastore.EnginePrefs
 import com.xplayer.app.data.local.MpvShaderEntity
-import com.xplayer.app.ui.common.rememberAppVM
 import com.xplayer.app.ui.components.SettingGroup
 import com.xplayer.app.ui.components.SettingRow
 import com.xplayer.app.ui.components.SettingSwitchRow
+import com.xplayer.app.ui.icons.XPlayerIcons
 
 @Composable
 fun MpvLabScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
     val settings by viewModel.settings.collectAsState()
     val shaders by viewModel.shaders.collectAsState()
-    var conf by remember { mutableStateOf(settings.engine.mpvConf) }
+    var conf by rememberSaveable { mutableStateOf(settings.engine.mpvConf) }
+    var lastLoadedConf by rememberSaveable { mutableStateOf(settings.engine.mpvConf) }
+    var resetConfirmVisible by remember { mutableStateOf(false) }
+    var pendingDeleteShader by remember { mutableStateOf<MpvShaderEntity?>(null) }
+
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
 
@@ -65,7 +72,10 @@ fun MpvLabScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
     ) { uri -> uri?.let(viewModel::importShader) }
 
     LaunchedEffect(settings.engine.mpvConf) {
-        conf = settings.engine.mpvConf
+        if (settings.engine.mpvConf != lastLoadedConf) {
+            lastLoadedConf = settings.engine.mpvConf
+            conf = settings.engine.mpvConf
+        }
     }
     LaunchedEffect(Unit) {
         viewModel.messages.collect { snackbar.showSnackbar(context.getString(it)) }
@@ -78,10 +88,22 @@ fun MpvLabScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 40.dp),
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding(),
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
         ) {
-            item {
+            item(key = "conf_group", contentType = "conf") {
                 SettingGroup(title = stringResource(R.string.mpv_conf)) {
+                    SettingSwitchRow(
+                        title = stringResource(R.string.mpv_conf_custom),
+                        subtitle = stringResource(R.string.mpv_conf_custom_desc),
+                        icon = Icons.Default.Build,
+                        checked = settings.engine.customMpvConfEnabled,
+                        onCheckedChange = { enabled ->
+                            viewModel.update { it.copy(engine = it.engine.copy(customMpvConfEnabled = enabled)) }
+                        },
+                    )
                     Column(modifier = Modifier.padding(14.dp)) {
                         Text(
                             text = stringResource(R.string.mpv_conf_desc),
@@ -100,21 +122,17 @@ fun MpvLabScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
                                 fontSize = 13.sp,
                             ),
                             shape = RoundedCornerShape(14.dp),
-                            placeholder = { Text("vo=gpu-next") },
+                            placeholder = { Text(stringResource(R.string.mpv_conf_hint)) },
                         )
                         Spacer(Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            TextButton(onClick = {
-                                conf = conf.trimEnd() + "\n" + PRESET_DEBAND
-                            }) {
+                            TextButton(onClick = { conf = appendPreset(conf, PRESET_DEBAND) }) {
                                 Text(
                                     text = stringResource(R.string.mpv_preset_band),
                                     style = MaterialTheme.typography.labelSmall,
                                 )
                             }
-                            TextButton(onClick = {
-                                conf = conf.trimEnd() + "\n" + PRESET_HDR
-                            }) {
+                            TextButton(onClick = { conf = appendPreset(conf, PRESET_HDR) }) {
                                 Text(
                                     text = stringResource(R.string.mpv_preset_hdr),
                                     style = MaterialTheme.typography.labelSmall,
@@ -125,10 +143,7 @@ fun MpvLabScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End,
                         ) {
-                            TextButton(onClick = {
-                                viewModel.resetMpvConf()
-                                conf = EnginePrefs.DEFAULT_MPV_CONF
-                            }) {
+                            TextButton(onClick = { resetConfirmVisible = true }) {
                                 Text(stringResource(R.string.common_reset))
                             }
                             TextButton(onClick = { viewModel.saveMpvConf(conf) }) {
@@ -139,7 +154,7 @@ fun MpvLabScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
                 }
             }
 
-            item {
+            item(key = "shaders_group", contentType = "shaders") {
                 SettingGroup(title = stringResource(R.string.mpv_shaders)) {
                     SettingSwitchRow(
                         title = stringResource(R.string.mpv_shader_master),
@@ -150,7 +165,7 @@ fun MpvLabScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
                                 R.string.mpv_shader_master_desc_off
                             },
                         ),
-                        icon = com.xplayer.app.ui.icons.XPlayerIcons.Grid,
+                        icon = XPlayerIcons.Grid,
                         checked = settings.engine.shaderPipelineEnabled,
                         onCheckedChange = { enabled ->
                             viewModel.update { it.copy(engine = it.engine.copy(shaderPipelineEnabled = enabled)) }
@@ -163,31 +178,37 @@ fun MpvLabScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
                         onClick = { importLauncher.launch(arrayOf("*/*")) },
                         showDivider = shaders.isNotEmpty(),
                     )
+                    if (shaders.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.mpv_shader_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                        )
+                    } else {
+                        shaders.forEachIndexed { idx, shader ->
+                            ShaderRow(
+                                shader = shader,
+                                canMoveUp = idx > 0,
+                                canMoveDown = idx < shaders.lastIndex,
+                                onToggle = { viewModel.setShaderEnabled(shader.id, it) },
+                                onMoveUp = { viewModel.moveShader(shader.id, -1) },
+                                onMoveDown = { viewModel.moveShader(shader.id, 1) },
+                                onDelete = { pendingDeleteShader = shader },
+                            )
+                            if (idx < shaders.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 18.dp),
+                                    thickness = 0.6.dp,
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
-            if (shaders.isEmpty()) {
-                item {
-                    Text(
-                        text = stringResource(R.string.mpv_shader_empty),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(24.dp),
-                    )
-                }
-            } else {
-                items(shaders, key = { it.id }) { shader ->
-                    ShaderRow(
-                        shader = shader,
-                        onToggle = { viewModel.setShaderEnabled(shader.id, it) },
-                        onMoveUp = { viewModel.moveShader(shader.id, -1) },
-                        onMoveDown = { viewModel.moveShader(shader.id, 1) },
-                        onDelete = { viewModel.deleteShader(shader) },
-                    )
-                }
-            }
-
-            item {
+            item(key = "note", contentType = "note") {
                 Text(
                     text = stringResource(R.string.mpv_lab_note),
                     style = MaterialTheme.typography.bodySmall,
@@ -197,11 +218,57 @@ fun MpvLabScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
             }
         }
     }
+
+    if (resetConfirmVisible) {
+        AlertDialog(
+            onDismissRequest = { resetConfirmVisible = false },
+            title = { Text(stringResource(R.string.common_reset)) },
+            text = { Text(stringResource(R.string.mpv_conf_reset_confirm)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        resetConfirmVisible = false
+                        viewModel.resetMpvConf()
+                        conf = EnginePrefs.DEFAULT_MPV_CONF
+                        lastLoadedConf = EnginePrefs.DEFAULT_MPV_CONF
+                    },
+                ) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetConfirmVisible = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    pendingDeleteShader?.let { shader ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteShader = null },
+            title = { Text(stringResource(R.string.common_delete)) },
+            text = { Text(stringResource(R.string.mpv_shader_delete_confirm, shader.name)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingDeleteShader = null
+                        viewModel.deleteShader(shader)
+                    },
+                ) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteShader = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
 }
 
 @Composable
 private fun ShaderRow(
     shader: MpvShaderEntity,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
     onToggle: (Boolean) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
@@ -210,9 +277,7 @@ private fun ShaderRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -220,18 +285,21 @@ private fun ShaderRow(
                 text = shader.name,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = shader.filePath.substringAfterLast('/'),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        IconButton(onClick = onMoveUp, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = onMoveUp, enabled = canMoveUp, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.mpv_shader_move_up))
         }
-        IconButton(onClick = onMoveDown, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = onMoveDown, enabled = canMoveDown, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.mpv_shader_move_down))
         }
         IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
@@ -239,6 +307,11 @@ private fun ShaderRow(
         }
         Switch(checked = shader.enabled, onCheckedChange = onToggle)
     }
+}
+
+private fun appendPreset(current: String, preset: String): String {
+    val trimmed = current.trimEnd()
+    return if (trimmed.isEmpty()) preset else "$trimmed\n$preset"
 }
 
 private const val PRESET_DEBAND = "deband=yes\ndeband-iterations=2\ndeband-grain=yes\n"

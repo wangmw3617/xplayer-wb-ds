@@ -10,13 +10,14 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import com.xplayer.app.data.datastore.AnimationLevel
 import com.xplayer.app.data.datastore.AppearancePrefs
-import com.xplayer.app.data.datastore.ColorSeed
 import com.xplayer.app.data.datastore.DarkSurfaceMode
 import com.xplayer.app.data.datastore.ThemeMode
 
@@ -67,9 +68,10 @@ fun seedColorScheme(seed: Color, dark: Boolean, amoled: Boolean = false): ColorS
             onErrorContainer = Color(0xFFFFDAD6),
         )
     } else {
+        val onPrimaryColor = if (seed.luminance() > 0.34f) Color(0xFF181A1F) else Color.White
         lightColorScheme(
             primary = seed,
-            onPrimary = Color.White,
+            onPrimary = onPrimaryColor,
             primaryContainer = Color.hsl(hue, 0.72f, 0.92f),
             onPrimaryContainer = Color.hsl(hue, 0.65f, 0.22f),
             secondary = Color.hsl(hue, 0.30f, 0.40f),
@@ -110,17 +112,16 @@ private fun hueOf(color: Color): Float {
 
 @Composable
 fun rememberAppColorScheme(appearance: AppearancePrefs): ColorScheme {
-    val systemDark = isSystemInDarkTheme()
     val dark = when (appearance.themeMode) {
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
-        ThemeMode.SYSTEM -> systemDark
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
     val pureBlack = dark && appearance.darkSurfaceMode == DarkSurfaceMode.PURE_BLACK
     val context = LocalContext.current
 
-    return when {
-        appearance.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+    return remember(appearance.dynamicColor, appearance.seed, dark, pureBlack, context) {
+        if (appearance.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val dynamic = if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
             if (pureBlack) {
                 dynamic.copy(
@@ -135,8 +136,9 @@ fun rememberAppColorScheme(appearance: AppearancePrefs): ColorScheme {
             } else {
                 dynamic
             }
+        } else {
+            seedColorScheme(Color(appearance.seed.seed), dark = dark, amoled = pureBlack)
         }
-        else -> seedColorScheme(Color(appearance.seed.seed), dark = dark, amoled = pureBlack)
     }
 }
 
@@ -151,6 +153,3 @@ fun XPlayerTheme(appearance: AppearancePrefs, content: @Composable () -> Unit) {
         )
     }
 }
-
-val SeedPreviewColors: List<Color>
-    get() = ColorSeed.entries.map { Color(it.seed) }

@@ -12,9 +12,6 @@ enum class HdrType {
     HDR10_PLUS,
     DOLBY_VISION,
     HLG,
-    ;
-
-    val isHdr: Boolean get() = this != NONE
 }
 
 enum class SourceType { LOCAL, NETWORK }
@@ -39,7 +36,11 @@ class Converters {
 
 @Entity(
     tableName = "videos",
-    indices = [Index(value = ["path"], unique = true), Index(value = ["folderPath"])],
+    indices = [
+        Index(value = ["path"], unique = true, name = "index_videos_path"),
+        Index(value = ["folderPath"], name = "index_videos_folderPath"),
+        Index(value = ["dateModified"], name = "index_videos_dateModified"),
+    ],
 )
 data class VideoEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -62,7 +63,10 @@ data class VideoEntity(
 
 @Entity(
     tableName = "playback_history",
-    indices = [Index(value = ["mediaId", "sourceType"], unique = true)],
+    indices = [
+        Index(value = ["mediaId", "sourceType"], unique = true, name = "index_playback_history_mediaId_sourceType"),
+        Index(value = ["lastPlayedAt"], name = "index_playback_history_lastPlayedAt"),
+    ],
 )
 data class PlaybackHistoryEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -93,7 +97,13 @@ data class FolderBlacklistEntity(
     val addedAt: Long = 0,
 )
 
-@Entity(tableName = "stream_urls")
+@Entity(
+    tableName = "stream_urls",
+    indices = [
+        Index(value = ["url"], unique = true, name = "index_stream_urls_url"),
+        Index(value = ["lastPlayedAt"], name = "index_stream_urls_lastPlayedAt"),
+    ],
+)
 data class StreamUrlEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val url: String,
@@ -103,7 +113,12 @@ data class StreamUrlEntity(
     val lastPlayedAt: Long = 0,
 )
 
-@Entity(tableName = "mpv_shaders")
+@Entity(
+    tableName = "mpv_shaders",
+    indices = [
+        Index(value = ["orderIndex"], name = "index_mpv_shaders_orderIndex"),
+    ],
+)
 data class MpvShaderEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
