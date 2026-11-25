@@ -64,6 +64,11 @@ class MpvEngineImpl(
     private var subtitleStyle = SubtitlePrefs()
     private var pendingSidecars: List<SidecarSubtitle> = emptyList()
     private var sidecarsLoaded = false
+    @Volatile
+    private var lastTrackCount = -1
+    private var lastAid: String? = null
+    private var lastSid: String? = null
+    private var cachedTracks = TrackSnapshot(emptyList(), emptyList(), null, null)
 
     override fun createVideoView(context: Context): View {
         val view = BaseMPVView(context, null)
@@ -90,6 +95,10 @@ class MpvEngineImpl(
         this.subtitleStyle = subtitleStyle
         pendingSidecars = if (source is LocalFileSource) source.subtitles else emptyList()
         sidecarsLoaded = false
+        lastTrackCount = -1
+        lastAid = null
+        lastSid = null
+        cachedTracks = TrackSnapshot(emptyList(), emptyList(), null, null)
         runCatching {
             applyOptions()
             applySubtitleStyle(subtitleStyle)
@@ -172,12 +181,18 @@ class MpvEngineImpl(
 
     override fun play() {
         _state.value = _state.value.copy(isPlaying = true)
-        launchMpv { mpv?.setPropertyBoolean("pause", false) }
+        launchMpv {
+            mpv?.setPropertyBoolean("pause", false)
+            refreshState()
+        }
     }
 
     override fun pause() {
         _state.value = _state.value.copy(isPlaying = false)
-        launchMpv { mpv?.setPropertyBoolean("pause", true) }
+        launchMpv {
+            mpv?.setPropertyBoolean("pause", true)
+            refreshState()
+        }
     }
 
     override fun seekTo(positionMs: Long) {
@@ -192,12 +207,20 @@ class MpvEngineImpl(
 
     override fun selectAudioTrack(track: TrackInfo) {
         _state.value = _state.value.copy(selectedAudioId = track.id)
-        launchMpv { mpv?.setPropertyString("aid", track.id) }
+        launchMpv {
+            mpv?.setPropertyString("aid", track.id)
+            lastTrackCount = -1
+            refreshState()
+        }
     }
 
     override fun selectSubtitleTrack(track: TrackInfo?) {
         _state.value = _state.value.copy(selectedSubtitleId = track?.id)
-        launchMpv { mpv?.setPropertyString("sid", track?.id ?: "no") }
+        launchMpv {
+            mpv?.setPropertyString("sid", track?.id ?: "no")
+            lastTrackCount = -1
+            refreshState()
+        }
     }
 
     override fun addExternalSubtitle(subtitle: SidecarSubtitle) {
@@ -205,6 +228,8 @@ class MpvEngineImpl(
         launchMpv {
             runCatching {
                 mpv?.command("sub-add", subtitle.path, "select", subtitle.name)
+                lastTrackCount = -1
+                refreshState()
             }.onFailure { Log.w(TAG, "sub-add failed: ${it.message}") }
         }
     }
@@ -309,7 +334,8 @@ class MpvEngineImpl(
         pollJob = scope.launch {
             while (isActive) {
                 runCatching { refreshState() }
-                delay(POLL_INTERVAL_MS)
+                val snap = _state.value
+                delay(if (snap.ready && !snap.isPlaying) PAUSED_POLL_INTERVAL_MS else POLL_INTERVAL_MS)
             }
         }
     }
@@ -323,16 +349,31 @@ class MpvEngineImpl(
         val width = mpv.getPropertyInt("width") ?: 0
         val height = mpv.getPropertyInt("height") ?: 0
         val eof = mpv.getPropertyBoolean("eof-reached") ?: false
-        if (duration > 0 && !sidecarsLoaded) {
+        val ready = duration > 0
+        if (ready && !sidecarsLoaded) {
             sidecarsLoaded = true
             loadPendingSidecars(mpv)
+            lastTrackCount = -1
         }
-        val (audio, subtitles, selectedAudio, selectedSubtitle) = readTracks(mpv)
+        val trackCount = mpv.getPropertyInt("track-list/count") ?: -1
+        val aid = mpv.getPropertyString("aid")
+        val sid = mpv.getPropertyString("sid")
+        val (audio, subtitles, selectedAudio, selectedSubtitle) =
+            if (!ready || trackCount != lastTrackCount || aid != lastAid || sid != lastSid) {
+                readTracks(mpv).also {
+                    cachedTracks = it
+                    lastTrackCount = trackCount
+                    lastAid = aid
+                    lastSid = sid
+                }
+            } else {
+                cachedTracks
+            }
 
         _state.value = _state.value.copy(
-            ready = duration > 0,
+            ready = ready,
             isPlaying = !paused && !eof,
-            isBuffering = duration <= 0.0,
+            isBuffering = !ready,
             positionMs = (position * 1000).toLong().coerceAtLeast(0L),
             durationMs = (duration * 1000).toLong().coerceAtLeast(0L),
             speed = speed.toFloat(),
@@ -418,5 +459,6 @@ class MpvEngineImpl(
     companion object {
         private const val TAG = "MpvEngine"
         private const val POLL_INTERVAL_MS = 300L
+        private const val PAUSED_POLL_INTERVAL_MS = 800L
     }
 }

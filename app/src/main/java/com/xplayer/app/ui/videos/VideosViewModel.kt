@@ -5,12 +5,14 @@ import androidx.lifecycle.viewModelScope
 import com.xplayer.app.AppContainer
 import com.xplayer.app.data.local.PlaybackHistoryEntity
 import com.xplayer.app.data.local.VideoEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -57,13 +59,15 @@ class VideosViewModel(private val container: AppContainer) : ViewModel() {
             .sortedWith(
                 when (sortMode) {
                     VideoSort.DATE -> compareByDescending { it.video.dateModified }
-                    VideoSort.NAME -> compareBy { it.video.title.lowercase() }
+                    VideoSort.NAME -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.video.title }
                     VideoSort.SIZE -> compareByDescending { it.video.sizeBytes }
                     VideoSort.DURATION -> compareByDescending { it.video.durationMs }
                 },
             )
             .toList()
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setQuery(value: String) {
         query.value = value

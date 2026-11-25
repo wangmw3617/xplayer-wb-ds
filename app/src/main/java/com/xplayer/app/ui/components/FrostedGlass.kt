@@ -62,8 +62,11 @@ fun rememberFrostedBackdropState(): FrostedBackdropState {
 /**
  * 标记为磨砂玻璃的背景采样源；Android 12+ 才会录制离屏图层，低版本保持零开销直通。
  */
-fun Modifier.frostedBackdropSource(state: FrostedBackdropState): Modifier =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+fun Modifier.frostedBackdropSource(
+    state: FrostedBackdropState,
+    enabled: Boolean = true,
+): Modifier =
+    if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         this
             .onGloballyPositioned { coords ->
                 state.sourceOriginInRoot = coords.positionInRoot()

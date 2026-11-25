@@ -6,6 +6,11 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
+data class VideoThumbRef(
+    val path: String,
+    val thumbnailPath: String?,
+)
+
 @Dao
 interface VideoDao {
 
@@ -17,6 +22,15 @@ interface VideoDao {
 
     @Query("SELECT path FROM videos")
     suspend fun allPaths(): List<String>
+
+    @Query("SELECT path, thumbnailPath FROM videos")
+    suspend fun allThumbRefs(): List<VideoThumbRef>
+
+    @Query("SELECT path, thumbnailPath FROM videos WHERE folderPath = :folder")
+    suspend fun folderThumbRefs(folder: String): List<VideoThumbRef>
+
+    @Query("SELECT thumbnailPath FROM videos WHERE thumbnailPath IS NOT NULL")
+    suspend fun allThumbnailPaths(): List<String>
 
     @Query("SELECT * FROM videos")
     suspend fun all(): List<VideoEntity>
@@ -32,6 +46,12 @@ interface VideoDao {
 
     @Query("DELETE FROM videos WHERE path = :path")
     suspend fun deleteByPath(path: String)
+
+    @Query("DELETE FROM videos WHERE path IN (:paths)")
+    suspend fun deleteByPaths(paths: List<String>)
+
+    @Query("DELETE FROM videos WHERE folderPath = :folder")
+    suspend fun deleteByFolder(folder: String)
 
     @Query("DELETE FROM videos")
     suspend fun clear()
@@ -60,6 +80,9 @@ interface PlaybackHistoryDao {
 
     @Query("DELETE FROM playback_history WHERE mediaId = :mediaId")
     suspend fun delete(mediaId: String)
+
+    @Query("DELETE FROM playback_history WHERE mediaId IN (:mediaIds)")
+    suspend fun deleteByMediaIds(mediaIds: List<String>)
 
     @Query("DELETE FROM playback_history")
     suspend fun clear()

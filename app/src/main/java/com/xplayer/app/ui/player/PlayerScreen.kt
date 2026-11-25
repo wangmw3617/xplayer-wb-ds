@@ -97,6 +97,7 @@ import com.xplayer.app.data.source.NetworkUrlSource
 import com.xplayer.app.data.source.SidecarSubtitle
 import com.xplayer.app.player.ScreenshotSaver
 import com.xplayer.app.player.engine.EngineType
+import com.xplayer.app.player.engine.PlayerUiState
 import com.xplayer.app.player.pip.PipController
 import com.xplayer.app.player.pip.PlayerCommand
 import com.xplayer.app.player.pip.PlayerCommandBus
@@ -104,6 +105,9 @@ import com.xplayer.app.player.service.PlaybackService
 import com.xplayer.app.ui.icons.XPlayerIcons
 import com.xplayer.app.util.Formatters
 import java.io.File
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -116,7 +120,12 @@ fun PlayerScreen(
     onOpenMediaInfo: () -> Unit = {},
 ) {
     val engine by viewModel.engine.collectAsState()
-    val state by viewModel.state.collectAsState()
+    // 将高频刷新的 positionMs / bufferedMs 剥离出根作用域，仅让进度条区域订阅，避免播放期间整页每 300ms 重组
+    val state by remember(viewModel) {
+        viewModel.state
+            .map { it.copy(positionMs = 0L, bufferedMs = 0L) }
+            .distinctUntilChanged()
+    }.collectAsState(initial = viewModel.state.value.copy(positionMs = 0L, bufferedMs = 0L))
     val settings by viewModel.settings.collectAsState()
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -127,9 +136,6 @@ fun PlayerScreen(
     var sheet by remember { mutableStateOf<PlayerSheet?>(null) }
     var rotationMode by remember { mutableStateOf(0) }
     var zoomScale by remember { mutableFloatStateOf(1f) }
-    var showRemaining by remember { mutableStateOf(false) }
-    var dragging by remember { mutableStateOf(false) }
-    var dragValue by remember { mutableFloatStateOf(0f) }
     var muted by remember { mutableStateOf(false) }
     var serviceRunning by remember { mutableStateOf(false) }
     var orientationApplied by remember { mutableStateOf(false) }
@@ -169,8 +175,12 @@ fun PlayerScreen(
             if (bitmap == null) {
                 snackbar.showSnackbar(context.getString(R.string.player_screenshot_failed))
             } else {
-                ScreenshotSaver.save(context, bitmap, settings.playback.screenshotFormat)
-                snackbar.showSnackbar(context.getString(R.string.player_screenshot_saved))
+                val saved = ScreenshotSaver.save(context, bitmap, settings.playback.screenshotFormat)
+                snackbar.showSnackbar(
+                    context.getString(
+                        if (saved != null) R.string.player_screenshot_saved else R.string.player_screenshot_failed,
+                    ),
+                )
             }
         }
     }
@@ -285,7 +295,7 @@ fun PlayerScreen(
                         BackgroundBehavior.PAUSE -> viewModel.controller.pause()
                         BackgroundBehavior.AUDIO -> {
                             if (!inPip && latestState.isPlaying) {
-                                startBackgroundAudio(context, viewModel, latestState.positionMs)?.let {
+                                startBackgroundAudio(context, viewModel, viewModel.state.value.positionMs)?.let {
                                     serviceRunning = true
                                     viewModel.controller.pause()
                                 }
@@ -381,8 +391,8 @@ fun PlayerScreen(
         PlayerGestureOverlay(
             prefs = settings.gesture,
             locked = viewModel.locked,
-            positionMs = state.positionMs,
-            durationMs = state.durationMs,
+            positionMsProvider = { viewModel.state.value.positionMs },
+            durationMsProvider = { viewModel.state.value.durationMs },
             brightness = brightness,
             volume = volume,
             onBrightness = ::applyBrightness,
@@ -460,21 +470,11 @@ fun PlayerScreen(
                 )
 
                 PlayerBottomBar(
-                    state = state,
-                    dragging = dragging,
-                    dragValue = dragValue,
-                    showRemaining = showRemaining,
+                    progressState = viewModel.state,
+                    speed = state.speed,
                     hasPrevious = viewModel.controller.hasPrevious,
                     hasNext = viewModel.controller.hasNext,
-                    onSeekPreview = {
-                        dragging = true
-                        dragValue = it
-                    },
-                    onSeekCommit = {
-                        dragging = false
-                        viewModel.controller.seekTo(it.toLong())
-                    },
-                    onToggleRemaining = { showRemaining = !showRemaining },
+                    onSeekCommit = { viewModel.controller.seekTo(it) },
                     onSpeed = { sheet = PlayerSheet.SPEED },
                     onTracks = { sheet = PlayerSheet.TRACKS },
                     onPrevious = viewModel.controller::previous,
@@ -581,7 +581,7 @@ fun PlayerScreen(
                 onBackgroundAudio = {
                     sheet = null
                     ensureNotificationPermission()
-                    if (startBackgroundAudio(context, viewModel, state.positionMs) != null) {
+                    if (startBackgroundAudio(context, viewModel, viewModel.state.value.positionMs) != null) {
                         serviceRunning = true
                         viewModel.controller.pause()
                         scope.launch {
@@ -735,15 +735,11 @@ private fun SkipByTenButton(forward: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun PlayerBottomBar(
-    state: com.xplayer.app.player.engine.PlayerUiState,
-    dragging: Boolean,
-    dragValue: Float,
-    showRemaining: Boolean,
+    progressState: StateFlow<PlayerUiState>,
+    speed: Float,
     hasPrevious: Boolean,
     hasNext: Boolean,
-    onSeekPreview: (Float) -> Unit,
-    onSeekCommit: (Float) -> Unit,
-    onToggleRemaining: () -> Unit,
+    onSeekCommit: (Long) -> Unit,
     onSpeed: () -> Unit,
     onTracks: () -> Unit,
     onPrevious: () -> Unit,
@@ -752,8 +748,6 @@ private fun PlayerBottomBar(
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val duration = state.durationMs.coerceAtLeast(1L)
-    val position = if (dragging) dragValue.toLong() else state.positionMs
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -761,61 +755,10 @@ private fun PlayerBottomBar(
             .navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 10.dp),
     ) {
-        if (dragging) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 8.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.72f))
-                    .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
-                    .padding(horizontal = 14.dp, vertical = 5.dp),
-            ) {
-                Text(
-                    text = "${Formatters.duration(position)} / ${Formatters.duration(state.durationMs)}",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = Formatters.duration(position),
-                color = Color.White.copy(alpha = 0.92f),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-            )
-            BilibiliSeekBar(
-                positionMs = position,
-                bufferedMs = state.bufferedMs,
-                durationMs = duration,
-                dragging = dragging,
-                onSeekPreview = onSeekPreview,
-                onSeekCommit = onSeekCommit,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 10.dp),
-            )
-            Text(
-                text = if (showRemaining) {
-                    "-" + Formatters.duration((state.durationMs - position).coerceAtLeast(0))
-                } else {
-                    Formatters.duration(state.durationMs)
-                },
-                color = Color.White.copy(alpha = 0.85f),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onToggleRemaining,
-                ),
-            )
-        }
+        PlayerProgressSection(
+            stateFlow = progressState,
+            onSeekCommit = onSeekCommit,
+        )
         Spacer(Modifier.height(4.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -840,7 +783,7 @@ private fun PlayerBottomBar(
                     .padding(horizontal = 10.dp, vertical = 4.dp),
             ) {
                 Text(
-                    text = "${Formatters.speed(state.speed)}×",
+                    text = "${Formatters.speed(speed)}×",
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
@@ -871,6 +814,88 @@ private fun PlayerBottomBar(
                 contentDescription = stringResource(R.string.player_settings),
             )
         }
+    }
+}
+
+@Composable
+private fun PlayerProgressSection(
+    stateFlow: StateFlow<PlayerUiState>,
+    onSeekCommit: (Long) -> Unit,
+) {
+    val state by stateFlow.collectAsState()
+    var dragging by remember { mutableStateOf(false) }
+    var dragValue by remember { mutableFloatStateOf(0f) }
+    var showRemaining by remember { mutableStateOf(false) }
+
+    val duration = state.durationMs.coerceAtLeast(1L)
+    val position = if (dragging) dragValue.toLong() else state.positionMs
+    val durationText = remember(state.durationMs) { Formatters.duration(state.durationMs) }
+
+    if (dragging) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                    .padding(horizontal = 14.dp, vertical = 5.dp),
+            ) {
+                Text(
+                    text = "${Formatters.duration(position)} / $durationText",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = Formatters.duration(position),
+            color = Color.White.copy(alpha = 0.92f),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        BilibiliSeekBar(
+            positionMs = position,
+            bufferedMs = state.bufferedMs,
+            durationMs = duration,
+            dragging = dragging,
+            onSeekPreview = {
+                dragging = true
+                dragValue = it
+            },
+            onSeekCommit = {
+                dragging = false
+                onSeekCommit(it.toLong())
+            },
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 10.dp),
+        )
+        Text(
+            text = if (showRemaining) {
+                "-" + Formatters.duration((state.durationMs - position).coerceAtLeast(0))
+            } else {
+                durationText
+            },
+            color = Color.White.copy(alpha = 0.85f),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { showRemaining = !showRemaining },
+            ),
+        )
     }
 }
 

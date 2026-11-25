@@ -1,11 +1,14 @@
 package com.xplayer.app.util
 
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 object Formatters {
+
+    private val dateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
     fun duration(ms: Long): String {
         if (ms <= 0) return "00:00"
@@ -49,8 +52,9 @@ object Formatters {
 
     fun dateTime(timeMillis: Long): String {
         if (timeMillis <= 0) return "-"
-        val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-        return formatter.format(Date(timeMillis))
+        return Instant.ofEpochMilli(timeMillis)
+            .atZone(ZoneId.systemDefault())
+            .format(dateTimeFormatter)
     }
 
     fun relativeTime(timeMillis: Long): String {

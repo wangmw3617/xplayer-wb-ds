@@ -77,8 +77,8 @@ fun HomeScreen(
     onRequestPermission: () -> Unit,
 ) {
     val viewModel = rememberAppVM { HomeViewModel(it) }
-    val videos by viewModel.videos.collectAsState()
-    val history by viewModel.history.collectAsState()
+    val videoCount by viewModel.videoCount.collectAsState()
+    val recentThumbnails by viewModel.recentThumbnails.collectAsState()
     val streams by viewModel.streams.collectAsState()
     val scanState by viewModel.scanState.collectAsState()
     val continueWatching by viewModel.continueWatching.collectAsState()
@@ -93,7 +93,7 @@ fun HomeScreen(
     ) {
         item {
             HomeHeader(
-                videoCount = videos.size,
+                videoCount = videoCount,
                 scanning = scanState.scanning,
                 onScan = viewModel::scan,
             )
@@ -111,7 +111,7 @@ fun HomeScreen(
                 Spacer(Modifier.height(8.dp))
                 ContinueWatchingCard(
                     entry = entry,
-                    thumbnail = viewModel.thumbnailFor(entry),
+                    thumbnail = entry.thumbnailPath ?: recentThumbnails[entry.mediaId],
                     onClick = { onResumeHistory(entry) },
                 )
             }
@@ -129,7 +129,7 @@ fun HomeScreen(
                     items(recent, key = { it.id }) { entry ->
                         RecentCard(
                             entry = entry,
-                            thumbnail = viewModel.thumbnailFor(entry),
+                            thumbnail = entry.thumbnailPath ?: recentThumbnails[entry.mediaId],
                             onClick = { onResumeHistory(entry) },
                             onRemove = { viewModel.removeHistory(entry.mediaId) },
                         )
@@ -155,7 +155,7 @@ fun HomeScreen(
             CodecPanelCard(onClick = onOpenCodec)
         }
 
-        if (videos.isEmpty() && !scanState.scanning) {
+        if (videoCount == 0 && !scanState.scanning) {
             item {
                 EmptyLibraryCard(
                     permissionGranted = permissionGranted,

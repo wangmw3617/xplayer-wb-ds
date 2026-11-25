@@ -7,10 +7,13 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import com.xplayer.app.data.datastore.ScreenshotFormat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -19,45 +22,60 @@ import java.util.Locale
  */
 object ScreenshotSaver {
 
-    fun save(context: Context, bitmap: Bitmap, format: ScreenshotFormat = ScreenshotFormat.PNG): Uri? {
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val extension = if (format == ScreenshotFormat.PNG) "png" else "jpg"
-        val fileName = "XPlayer_$stamp.$extension"
-        val mime = if (format == ScreenshotFormat.PNG) "image/png" else "image/jpeg"
-        val compressFormat = if (format == ScreenshotFormat.PNG) {
-            Bitmap.CompressFormat.PNG
-        } else {
-            Bitmap.CompressFormat.JPEG
-        }
+    private val stampFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US)
 
-        runCatching {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                put(MediaStore.Images.Media.MIME_TYPE, mime)
-                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/XPlayer")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
+    suspend fun save(
+        context: Context,
+        bitmap: Bitmap,
+        format: ScreenshotFormat = ScreenshotFormat.PNG,
+    ): Uri? = withContext(Dispatchers.IO) {
+        try {
+            val stamp = Instant.now().atZone(ZoneId.systemDefault()).format(stampFormatter)
+            val extension = if (format == ScreenshotFormat.PNG) "png" else "jpg"
+            val fileName = "XPlayer_$stamp.$extension"
+            val mime = if (format == ScreenshotFormat.PNG) "image/png" else "image/jpeg"
+            val compressFormat = if (format == ScreenshotFormat.PNG) {
+                Bitmap.CompressFormat.PNG
+            } else {
+                Bitmap.CompressFormat.JPEG
             }
-            val resolver = context.contentResolver
-            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            if (uri != null) {
-                resolver.openOutputStream(uri)?.use { output ->
-                    bitmap.compress(compressFormat, 95, output)
+
+            runCatching {
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.MIME_TYPE, mime)
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/XPlayer")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
-                values.clear()
-                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-                return uri
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    val written = resolver.openOutputStream(uri)?.use { output ->
+                        bitmap.compress(compressFormat, 95, output)
+                    } ?: false
+                    if (written) {
+                        values.clear()
+                        values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                        resolver.update(uri, values, null, null)
+                        return@withContext uri
+                    } else {
+                        resolver.delete(uri, null, null)
+                    }
+                }
             }
-        }
 
-        return runCatching {
-            val dir = File(
-                context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir,
-                "XPlayer",
-            ).apply { mkdirs() }
-            val file = File(dir, fileName)
-            FileOutputStream(file).use { bitmap.compress(compressFormat, 95, it) }
-            Uri.fromFile(file)
-        }.getOrNull()
+            runCatching {
+                val dir = File(
+                    context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir,
+                    "XPlayer",
+                ).apply { mkdirs() }
+                val file = File(dir, fileName)
+                FileOutputStream(file).use { bitmap.compress(compressFormat, 95, it) }
+                Uri.fromFile(file)
+            }.getOrNull()
+        } finally {
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
     }
 }

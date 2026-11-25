@@ -18,7 +18,7 @@ class MetadataExtractor(private val thumbnailDir: File) {
 
     private val assMimes = setOf("text/x-ssa", "text/x-ass", "application/x-ass", "application/x-ssa")
 
-    fun extract(file: File): VideoEntity {
+    fun extract(file: File, externalAssHint: Boolean? = null): VideoEntity {
         val path = runCatching { file.canonicalPath }.getOrDefault(file.absolutePath)
         var duration = 0L
         var width = 0
@@ -58,6 +58,8 @@ class MetadataExtractor(private val thumbnailDir: File) {
             else -> hdrFromName(file.nameWithoutExtension)
         }
 
+        val hasExternalAss = externalAssHint ?: SubtitleFinder.find(path).any { SubtitleFinder.isAss(it.path) }
+
         return VideoEntity(
             path = path,
             folderPath = file.parent ?: "",
@@ -70,7 +72,7 @@ class MetadataExtractor(private val thumbnailDir: File) {
             height = height,
             videoCodec = codec ?: tracks.codecMime,
             hdrType = hdr,
-            hasAssSubtitle = tracks.hasAss || SubtitleFinder.find(path).any { SubtitleFinder.isAss(it.path) },
+            hasAssSubtitle = tracks.hasAss || hasExternalAss,
             thumbnailPath = thumbnail,
             bitrate = bitrate,
             frameRate = frameRate,

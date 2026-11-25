@@ -65,6 +65,7 @@ class MediaScanner(
 
             val pending = ArrayList<VideoEntity>(32)
             val seen = HashSet<String>(candidates.size)
+            val assNamesByFolder = HashMap<String, List<String>>()
             candidates.forEachIndexed { index, file ->
                 while (playbackActive.value) {
                     delay(300L)
@@ -76,7 +77,12 @@ class MediaScanner(
                     old.sizeBytes == file.length() &&
                     old.dateModified == file.lastModified()
                 if (!unchanged) {
-                    runCatching { extractor.extract(file) }
+                    val folderPath = file.parent ?: ""
+                    val folderAssNames = assNamesByFolder.getOrPut(folderPath) {
+                        if (folderPath.isEmpty()) emptyList() else SubtitleFinder.listAssNamesInFolder(folderPath)
+                    }
+                    val hasExternalAss = SubtitleFinder.hasMatchingAss(file, folderAssNames)
+                    runCatching { extractor.extract(file, externalAssHint = hasExternalAss) }
                         .onFailure { Log.w(TAG, "extract failed: ${file.name}", it) }
                         .getOrNull()
                         ?.let { pending += it }
@@ -95,6 +101,7 @@ class MediaScanner(
                 pending.clear()
             }
             videoRepository.deleteMissing(seen)
+            pruneCaches(videoRepository.allThumbnailPaths())
 
             _state.value.copy(scanning = false, finishedAt = System.currentTimeMillis())
                 .also { _state.value = it }
@@ -151,9 +158,28 @@ class MediaScanner(
         return roots.map { File(it) }.filter { it.exists() && it.canRead() }
     }
 
+    /** 清理孤立缩略图与超期导入的临时外挂字幕缓存，防止 cacheDir 持续膨胀 */
+    private fun pruneCaches(activeThumbnailPaths: Set<String>) {
+        val activeThumbNames = activeThumbnailPaths.mapTo(HashSet(activeThumbnailPaths.size)) { File(it).name }
+        File(context.cacheDir, "thumbs").listFiles()?.forEach { file ->
+            if (file.isFile && file.name !in activeThumbNames) {
+                runCatching { file.delete() }
+            }
+        }
+        if (!playbackActive.value) {
+            val cutoff = System.currentTimeMillis() - STALE_SUBTITLE_AGE_MS
+            File(context.cacheDir, "subtitles").listFiles()?.forEach { file ->
+                if (file.isFile && file.lastModified() < cutoff) {
+                    runCatching { file.delete() }
+                }
+            }
+        }
+    }
+
     companion object {
         private const val TAG = "MediaScanner"
         private const val BATCH = 20
+        private const val STALE_SUBTITLE_AGE_MS = 7L * 24 * 60 * 60 * 1000
 
         val VIDEO_EXTENSIONS = setOf(
             "mp4", "mkv", "mov", "avi", "webm", "flv", "ts", "m2ts",

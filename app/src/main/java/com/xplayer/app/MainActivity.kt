@@ -231,12 +231,15 @@ private fun XPlayerNavHost(
         }
     }
 
+    val backdropRecordingEnabled =
+        bottomBarStyle == BottomBarStyle.LIQUID_GLASS && currentRoute in Routes.mainTabs
+
     CompositionLocalProvider(LocalAppBackdropState provides appBackdropState) {
         Box(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .frostedBackdropSource(appBackdropState)
+                    .frostedBackdropSource(appBackdropState, enabled = backdropRecordingEnabled)
                     .background(MaterialTheme.colorScheme.background),
             ) {
                 NavHost(

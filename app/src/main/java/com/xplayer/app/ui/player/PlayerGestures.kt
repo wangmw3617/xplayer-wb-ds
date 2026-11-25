@@ -72,8 +72,8 @@ private sealed interface GestureHud {
 fun PlayerGestureOverlay(
     prefs: GesturePrefs,
     locked: Boolean,
-    positionMs: Long,
-    durationMs: Long,
+    positionMsProvider: () -> Long,
+    durationMsProvider: () -> Long,
     brightness: Float,
     volume: Float,
     onBrightness: (Float) -> Unit,
@@ -94,10 +94,9 @@ fun PlayerGestureOverlay(
     var zoomScale by remember { mutableFloatStateOf(1f) }
     var zoomPan by remember { mutableStateOf(Offset.Zero) }
 
-    // positionMs 每 300-400ms 刷新一次，必须通过 rememberUpdatedState 读取而不能放进 pointerInput key，
-    // 否则播放过程中每半秒就会打断手势识别导致单击/双击/滑动失效
-    val latestPositionMs by rememberUpdatedState(positionMs)
-    val latestDurationMs by rememberUpdatedState(durationMs)
+    // 通过无参回调读取最新进度与时长，避免 positionMs 每 300-400ms 刷新引发手势层无效重组
+    val latestPositionMsProvider by rememberUpdatedState(positionMsProvider)
+    val latestDurationMsProvider by rememberUpdatedState(durationMsProvider)
     val latestBrightness by rememberUpdatedState(brightness)
     val latestVolume by rememberUpdatedState(volume)
     val latestOnBrightness by rememberUpdatedState(onBrightness)
@@ -152,8 +151,8 @@ fun PlayerGestureOverlay(
                     var longPressActive = false
                     var dragMode: DragMode? = null
                     var accumulated = Offset.Zero
-                    val startPositionMs = latestPositionMs
-                    val totalDurationMs = latestDurationMs
+                    val startPositionMs = latestPositionMsProvider()
+                    val totalDurationMs = latestDurationMsProvider()
                     var seekTarget = startPositionMs
                     val baseBrightness = latestBrightness
                     val baseVolume = latestVolume

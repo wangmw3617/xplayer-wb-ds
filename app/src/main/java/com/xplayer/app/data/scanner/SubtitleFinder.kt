@@ -54,21 +54,38 @@ object SubtitleFinder {
         }
     }
 
+    /** 读取目录下全部 ASS/SSA 文件的小写主名，供扫描器按目录缓存复用 */
+    fun listAssNamesInFolder(dirPath: String): List<String> {
+        val dir = File(dirPath)
+        val files = runCatching { dir.listFiles() }.getOrNull() ?: return emptyList()
+        return files.asSequence()
+            .filter { it.isFile && isAss(it.name) }
+            .map { it.nameWithoutExtension.lowercase(Locale.US) }
+            .toList()
+    }
+
+    fun hasMatchingAss(videoFile: File, folderAssNames: List<String>): Boolean {
+        if (folderAssNames.isEmpty()) return false
+        val base = videoFile.nameWithoutExtension.lowercase(Locale.US)
+        if (base.isEmpty()) return false
+        return folderAssNames.any { matchesBase(it, base) }
+    }
+
     private fun matchForVideo(video: File, subFiles: List<File>): List<SidecarSubtitle> {
         val base = video.nameWithoutExtension.lowercase(Locale.US)
         if (base.isEmpty()) return emptyList()
         return subFiles.asSequence()
-            .filter { file ->
-                val name = file.nameWithoutExtension.lowercase(Locale.US)
-                name == base ||
-                    name.startsWith("$base.") ||
-                    name.startsWith("${base}_") ||
-                    name.startsWith("$base-")
-            }
+            .filter { matchesBase(it.nameWithoutExtension.lowercase(Locale.US), base) }
             .sortedBy { it.name.lowercase(Locale.US) }
             .map { SidecarSubtitle(path = it.absolutePath, name = it.name, mimeType = mimeFor(it.name) ?: "text/x-ssa") }
             .toList()
     }
+
+    private fun matchesBase(subBase: String, videoBase: String): Boolean =
+        subBase == videoBase ||
+            subBase.startsWith("$videoBase.") ||
+            subBase.startsWith("${videoBase}_") ||
+            subBase.startsWith("$videoBase-")
 
     /**
      * 将系统文件选择器返回的 content:// 字幕拷贝至应用缓存目录，

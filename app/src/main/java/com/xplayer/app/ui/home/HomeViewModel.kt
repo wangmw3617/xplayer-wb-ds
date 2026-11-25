@@ -6,22 +6,22 @@ import com.xplayer.app.AppContainer
 import com.xplayer.app.data.datastore.AppSettings
 import com.xplayer.app.data.local.PlaybackHistoryEntity
 import com.xplayer.app.data.local.StreamUrlEntity
-import com.xplayer.app.data.local.VideoEntity
 import com.xplayer.app.data.scanner.ScanState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
-    val videos: StateFlow<List<VideoEntity>> = container.videoRepository.videos
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val videoCount: StateFlow<Int> = container.videoRepository.count
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
-    val history: StateFlow<List<PlaybackHistoryEntity>> = container.playbackRepository.history
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private val history = container.playbackRepository.history
 
     val streams: StateFlow<List<StreamUrlEntity>> = container.streamRepository.items
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -40,18 +40,39 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     entry.lastPositionMs > 1_000 &&
                     entry.lastPositionMs < entry.durationMs * 0.95f
             }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val recent: StateFlow<List<PlaybackHistoryEntity>> =
         history.map { it.take(15) }
+            .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun thumbnailFor(entry: PlaybackHistoryEntity): String? {
-        val direct = entry.thumbnailPath
-        if (direct != null) return direct
-        val match = videos.value.firstOrNull { it.path == entry.mediaId }
-        return match?.thumbnailPath
+    val recentThumbnails: StateFlow<Map<String, String?>> = combine(
+        recent,
+        continueWatching,
+        container.videoRepository.videos,
+    ) { recentList, continueItem, videoList ->
+        val needed = HashSet<String>(recentList.size + 1)
+        if (continueItem != null && continueItem.thumbnailPath == null) {
+            needed += continueItem.mediaId
+        }
+        recentList.forEach { entry ->
+            if (entry.thumbnailPath == null) needed += entry.mediaId
+        }
+        if (needed.isEmpty()) return@combine emptyMap()
+        val result = HashMap<String, String?>(needed.size)
+        for (video in videoList) {
+            if (video.path in needed) {
+                result[video.path] = video.thumbnailPath
+                if (result.size == needed.size) break
+            }
+        }
+        result
     }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     fun scan() {
         viewModelScope.launch { container.mediaScanner.scan() }
