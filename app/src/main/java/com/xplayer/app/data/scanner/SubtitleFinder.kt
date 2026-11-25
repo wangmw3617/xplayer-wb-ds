@@ -1,5 +1,8 @@
 package com.xplayer.app.data.scanner
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import com.xplayer.app.data.source.SidecarSubtitle
 import java.io.File
 import java.util.Locale
@@ -48,4 +51,31 @@ object SubtitleFinder {
             .map { SidecarSubtitle(path = it.absolutePath, name = it.name, mimeType = mimeFor(it.name) ?: "text/x-ssa") }
             .toList()
     }
+
+    /**
+     * 将系统文件选择器返回的 content:// 字幕拷贝至应用缓存目录，
+     * 保证 Media3 与 libmpv 均可通过真实文件路径读取且授权不会随页面退出失效。
+     */
+    fun importFromUri(context: Context, uri: Uri): SidecarSubtitle? = runCatching {
+        val displayName = context.contentResolver
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
+            }
+            ?.takeIf { it.isNotBlank() }
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "external.ass"
+        val safeName = displayName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val subDir = File(context.cacheDir, "subtitles").apply { mkdirs() }
+        val target = File(subDir, "${System.currentTimeMillis()}_$safeName")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            target.outputStream().use { output -> input.copyTo(output) }
+        } ?: return null
+        SidecarSubtitle(
+            path = target.absolutePath,
+            name = displayName,
+            mimeType = mimeFor(displayName) ?: "text/x-ssa",
+        )
+    }.getOrNull()
 }

@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * libmpv 内核：负责 ASS/SSA 特效字幕（libass）、GLSL 着色器、mpv.conf 覆盖与软硬解切换。
@@ -52,6 +53,8 @@ class MpvEngineImpl(
     private var mpv: MPV? = null
     private var initialized = false
     private var subtitleStyle = SubtitlePrefs()
+    private var pendingSidecars: List<SidecarSubtitle> = emptyList()
+    private var sidecarsLoaded = false
 
     override fun createVideoView(context: Context): View {
         val view = BaseMPVView(context, null)
@@ -75,6 +78,8 @@ class MpvEngineImpl(
         }
 
         this.subtitleStyle = subtitleStyle
+        pendingSidecars = if (source is LocalFileSource) source.subtitles else emptyList()
+        sidecarsLoaded = false
         runCatching {
             applyOptions()
             applySubtitleStyle(subtitleStyle)
@@ -115,8 +120,12 @@ class MpvEngineImpl(
         return runCatching {
             val configDir = File(context.filesDir, "mpv").apply { mkdirs() }
             val cacheDir = File(context.cacheDir, "mpv").apply { mkdirs() }
+            val confFile = File(configDir, "mpv.conf")
             if (mpvConf.isNotBlank()) {
-                File(configDir, "mpv.conf").writeText(mpvConf)
+                confFile.writeText(mpvConf)
+            } else if (confFile.exists()) {
+                // 未启用或清空自定义配置时清理旧文件，避免 libmpv 继续读取残留 mpv.conf
+                confFile.delete()
             }
             view.initialize(configDir.absolutePath, cacheDir.absolutePath)
             mpv = view.mpv
@@ -247,7 +256,9 @@ class MpvEngineImpl(
         runCatching { mpv?.setPropertyDouble("volume", (volume * 100f).coerceIn(0f, 200f).toDouble()) }
     }
 
-    override suspend fun captureFrame(): Bitmap? = runCatching { mpv?.grabThumbnail(0) }.getOrNull()
+    override suspend fun captureFrame(): Bitmap? = withContext(Dispatchers.IO) {
+        runCatching { mpv?.grabThumbnail(0) }.getOrNull()
+    }
 
     override fun release() {
         pollJob?.cancel()
@@ -278,6 +289,10 @@ class MpvEngineImpl(
         val width = mpv.getPropertyInt("width") ?: 0
         val height = mpv.getPropertyInt("height") ?: 0
         val eof = mpv.getPropertyBoolean("eof-reached") ?: false
+        if (duration > 0 && !sidecarsLoaded) {
+            sidecarsLoaded = true
+            loadPendingSidecars(mpv)
+        }
         val (audio, subtitles, selectedAudio, selectedSubtitle) = readTracks(mpv)
 
         _state.value = _state.value.copy(
@@ -295,6 +310,17 @@ class MpvEngineImpl(
             selectedAudioId = selectedAudio,
             selectedSubtitleId = selectedSubtitle,
         )
+    }
+
+    private fun loadPendingSidecars(mpv: MPV) {
+        if (pendingSidecars.isEmpty()) return
+        val activeSid = runCatching { mpv.getPropertyString("sid") }.getOrNull()
+        val hasSelectedSub = !activeSid.isNullOrBlank() && activeSid != "no" && activeSid != "false"
+        pendingSidecars.forEachIndexed { index, sub ->
+            val flag = if (!hasSelectedSub && index == 0) "select" else "auto"
+            runCatching { mpv.command("sub-add", sub.path, flag, sub.name) }
+                .onFailure { Log.w(TAG, "load sidecar sub failed: ${it.message}") }
+        }
     }
 
     private data class TrackSnapshot(

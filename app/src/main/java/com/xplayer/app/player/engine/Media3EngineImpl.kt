@@ -162,7 +162,7 @@ class Media3EngineImpl(
         startPlayback(startPositionMs, speed)
     }
 
-    private fun startPlayback(startPositionMs: Long, speed: Float) {
+    private fun startPlayback(startPositionMs: Long, speed: Float, playWhenReady: Boolean = true) {
         val mediaSource = source ?: return
         releasePlayer()
         val httpFactory = DefaultHttpDataSource.Factory()
@@ -190,7 +190,7 @@ class Media3EngineImpl(
         val item = buildMediaItem(mediaSource)
         exoPlayer.setMediaItem(item, startPositionMs.coerceAtLeast(0L))
         exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
+        exoPlayer.playWhenReady = playWhenReady
         _state.value = _state.value.copy(
             ready = false,
             isPlaying = false,
@@ -282,8 +282,7 @@ class Media3EngineImpl(
         externalSubtitles += subtitle
         val position = player?.currentPosition ?: 0L
         val wasPlaying = player?.isPlaying ?: false
-        startPlayback(position, pendingSpeed)
-        if (!wasPlaying) player?.pause()
+        startPlayback(position, pendingSpeed, playWhenReady = wasPlaying)
     }
 
     /** Media3 无字幕时间轴偏移能力，交由 mpv 处理（UI 会提示） */
@@ -369,11 +368,11 @@ class Media3EngineImpl(
                 surfaceView,
                 bitmap,
                 { result ->
-                    if (result == PixelCopy.SUCCESS) {
+                    if (result == PixelCopy.SUCCESS && continuation.isActive) {
                         continuation.resume(bitmap)
                     } else {
                         bitmap.recycle()
-                        continuation.resume(null)
+                        if (continuation.isActive) continuation.resume(null)
                     }
                 },
                 handler,

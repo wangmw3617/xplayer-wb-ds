@@ -27,6 +27,7 @@ import com.xplayer.app.player.engine.TrackInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -40,6 +41,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class PlayerNotice(@StringRes val messageRes: Int, val arg: String? = null)
 
@@ -136,8 +138,7 @@ class PlayerController(
             val decision = router.decide(settings, source, hasEmbeddedAss, preferredEngine)
             routeReason = decision.reason
             val newEngine = createEngine(decision.engine)
-            bindEngine(newEngine)
-            playbackStarted = false
+            replaceEngine(_engine.value, newEngine)
             if (decision.reason == EngineReason.ASS_AUTO_MPV) {
                 _notice.tryEmit(PlayerNotice(R.string.player_ass_routed))
             }
@@ -175,13 +176,8 @@ class PlayerController(
         pendingStartMs = position
         currentSpeed = resumeSpeed
         val newEngine = createEngine(target)
-        bindEngine(newEngine)
-        playbackStarted = false
+        replaceEngine(current, newEngine)
         _notice.tryEmit(PlayerNotice(R.string.player_switching, target.name))
-        scope.launch {
-            delay(120)
-            runCatching { current.release() }
-        }
     }
 
     fun close() {
@@ -261,14 +257,16 @@ class PlayerController(
         val target = playlistIndex + delta
         if (target !in list.indices) return
         val nextSource = list[target]
-        val previousEngine = manualEngine
         persistPositionNow()
-        playbackStarted = false
+        fallbackAttempted = false
+        hasEmbeddedAss = false
         pendingStartMs = 0L
         playlistIndex = target
         source = nextSource
-        val newEngine = createEngine(previousEngine ?: currentEngineType)
-        bindEngine(newEngine)
+        val decision = router.decide(settings, nextSource, hasEmbeddedAss = false, preferred = manualEngine)
+        routeReason = decision.reason
+        val newEngine = createEngine(decision.engine)
+        replaceEngine(_engine.value, newEngine)
     }
 
     private fun createEngine(type: EngineType): PlayerEngine = when (type) {
@@ -276,9 +274,27 @@ class PlayerController(
         EngineType.MPV -> MpvEngineImpl(
             context = context,
             hwDecoder = settings.engine.mpvHwDecoder,
-            mpvConf = settings.engine.mpvConf,
+            mpvConf = if (settings.engine.customMpvConfEnabled) settings.engine.mpvConf else "",
             shaderPaths = activeShaderPaths,
         )
+    }
+
+    private fun replaceEngine(previous: PlayerEngine?, next: PlayerEngine) {
+        runCatching { previous?.pause() }
+        bindEngine(next)
+        playbackStarted = false
+        if (previous != null && previous !== next) {
+            scope.launch {
+                // 等待 Compose 将旧视频渲染视图移出树再销毁底层播放器，且退出取消时仍通过 NonCancellable 释放
+                try {
+                    delay(120)
+                } finally {
+                    withContext(NonCancellable) {
+                        runCatching { previous.release() }
+                    }
+                }
+            }
+        }
     }
 
     private fun bindEngine(newEngine: PlayerEngine) {
@@ -298,6 +314,7 @@ class PlayerController(
     }
 
     private fun handleEngineError(failedEngine: PlayerEngine, error: String) {
+        if (failedEngine !== _engine.value) return
         // content:// 换 mpv 也没用，直接停在报错上
         if (source is ContentUriSource) return
         if (failedEngine.type == EngineType.MEDIA3 && !fallbackAttempted && EngineAvailability.mpvAvailable) {
@@ -307,8 +324,7 @@ class PlayerController(
             val position = _state.value.positionMs
             pendingStartMs = position
             val mpvEngine = createEngine(EngineType.MPV)
-            bindEngine(mpvEngine)
-            playbackStarted = false
+            replaceEngine(failedEngine, mpvEngine)
         }
     }
 
@@ -317,32 +333,47 @@ class PlayerController(
         persistJob = scope.launch {
             while (isActive) {
                 delay(PERSIST_INTERVAL_MS)
-                runCatching { persist() }
+                capturePersistSnapshot()?.let { snapshot ->
+                    runCatching { persist(snapshot) }
+                }
             }
         }
     }
 
     private fun persistPositionNow() {
-        ioScope.launch { runCatching { persist() } }
+        val snapshot = capturePersistSnapshot() ?: return
+        ioScope.launch { runCatching { persist(snapshot) } }
     }
 
-    private suspend fun persist() {
-        val src = source ?: return
+    private data class PersistSnapshot(
+        val src: MediaSource,
+        val uiState: PlayerUiState,
+        val preferredEngine: String?,
+    )
+
+    private fun capturePersistSnapshot(): PersistSnapshot? {
+        val src = source ?: return null
         // 外部 content:// 的临时授权重启后失效，落库只会留下点不开的僵尸记录
-        if (src is ContentUriSource) return
-        val snapshot = _state.value
-        if (snapshot.durationMs <= 0) return
-        if (snapshot.positionMs < 1_000L && !snapshot.ended) return
+        if (src is ContentUriSource) return null
+        val uiState = _state.value
+        if (uiState.durationMs <= 0) return null
+        if (uiState.positionMs < 1_000L && !uiState.ended) return null
+        return PersistSnapshot(src = src, uiState = uiState, preferredEngine = manualEngine?.name)
+    }
+
+    private suspend fun persist(snapshot: PersistSnapshot) {
+        val src = snapshot.src
+        val uiState = snapshot.uiState
         playbackRepository.save(
             mediaId = src.key,
             sourceType = if (src.isLocal) SourceType.LOCAL else SourceType.NETWORK,
             title = src.displayName,
-            positionMs = if (snapshot.ended) snapshot.durationMs else snapshot.positionMs,
-            durationMs = snapshot.durationMs,
-            preferredEngine = manualEngine?.name,
-            subtitleDelayMs = snapshot.subtitleDelayMs,
-            audioTrackId = snapshot.selectedAudioId,
-            subtitleTrackId = snapshot.selectedSubtitleId,
+            positionMs = if (uiState.ended) uiState.durationMs else uiState.positionMs,
+            durationMs = uiState.durationMs,
+            preferredEngine = snapshot.preferredEngine,
+            subtitleDelayMs = uiState.subtitleDelayMs,
+            audioTrackId = uiState.selectedAudioId,
+            subtitleTrackId = uiState.selectedSubtitleId,
             thumbnailPath = null,
             folderPath = src.folderPath,
         )

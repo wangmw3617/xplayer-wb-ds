@@ -32,11 +32,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -55,6 +57,9 @@ import com.xplayer.app.player.engine.TrackInfo
 import com.xplayer.app.ui.icons.XPlayerIcons
 import com.xplayer.app.util.Formatters
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -72,16 +77,16 @@ fun TracksSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            val name = uri.lastPathSegment?.substringAfterLast('/') ?: "external.ass"
-            onImportSubtitle(
-                SidecarSubtitle(
-                    path = uri.toString(),
-                    name = name,
-                    mimeType = com.xplayer.app.data.scanner.SubtitleFinder.mimeFor(name) ?: "text/x-ssa",
-                ),
-            )
+            scope.launch {
+                val imported = withContext(Dispatchers.IO) {
+                    com.xplayer.app.data.scanner.SubtitleFinder.importFromUri(context, uri)
+                }
+                if (imported != null) onImportSubtitle(imported)
+            }
         }
     }
 
